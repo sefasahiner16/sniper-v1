@@ -1,0 +1,5 @@
+# Sniper V1 - Data files
+*.pyc
+__pycache__/
+.env
+*.log
