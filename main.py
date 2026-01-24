@@ -17,6 +17,7 @@ Usage:
 """
 
 import sys
+import os
 import asyncio
 import argparse
 from datetime import datetime
@@ -234,17 +235,21 @@ def main():
         run_v1_legacy_loop()
     
     else:
-        # V2 or V3 based on --version flag
+        # V2 or V3 based on BOT_VERSION env var (for Railway) or --version flag
         if not test_connection():
             print("\n❌ Connection test failed. Fix issues above and retry.")
             sys.exit(1)
         
-        if args.version == 'v2':
+        # Priority: Environment variable > Command line argument
+        version = os.getenv("BOT_VERSION", args.version).lower()
+        
+        if version == 'v2':
             # V2: Single-slot mode (uses legacy loop with V2 features)
             print("\n🔄 Running in V2 mode (single-slot)...")
-            run_v1_legacy_loop()  # V2 features are integrated into legacy loop
+            run_v1_legacy_loop()
         else:
             # V3: Multi-slot mode (default)
+            print("\n🚀 Running in V3 mode (multi-slot)...")
             run_v3_dispatcher()
 
 
