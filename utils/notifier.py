@@ -1,11 +1,18 @@
 """
-Sniper V3 - Telegram Notification Module
-=========================================
-Sends trade notifications to Telegram.
+Sniper - Telegram Notification Module
+=====================================
+Sends trade notifications to Telegram with version labels.
 """
 
+import os
 import requests
 from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+
+# Get bot version from environment (v2 or v3)
+def get_version_label() -> str:
+    """Get the version label for messages."""
+    version = os.getenv("BOT_VERSION", "v3").upper()
+    return version
 
 
 def send_message(text: str) -> bool:
@@ -46,11 +53,12 @@ def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float) 
         take_profit: Target price
         stop_loss: Stop loss price
     """
+    version = get_version_label()
     tp_pct = ((take_profit - price) / price) * 100
     sl_pct = ((stop_loss - price) / price) * 100
     
     message = f"""
-🟢 *BUY SIGNAL EXECUTED*
+🟢 *[{version}] BUY SIGNAL EXECUTED*
 
 📊 *Symbol:* `{symbol}`
 💰 *Entry Price:* ${price:.6f}
@@ -76,6 +84,7 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
         pnl_usd: Profit/Loss in USD
         reason: Exit reason (TP_HIT, SL_HIT, TRAILING_STOP, TIME_EXIT)
     """
+    version = get_version_label()
     emoji = "🟢" if pnl_pct >= 0 else "🔴"
     win_loss = "WIN" if pnl_pct >= 0 else "LOSS"
     
@@ -84,11 +93,12 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
         "SL_HIT": "❌ Stop Loss Hit",
         "TRAILING_STOP": "📈 Trailing Stop Triggered",
         "TIME_EXIT": "⏰ Time-Based Exit",
-        "MANUAL": "👤 Manual Exit"
+        "MANUAL": "👤 Manual Exit",
+        "SHUTDOWN": "🛑 Bot Shutdown"
     }.get(reason, reason)
     
     message = f"""
-{emoji} *POSITION CLOSED - {win_loss}*
+{emoji} *[{version}] POSITION CLOSED - {win_loss}*
 
 📊 *Symbol:* `{symbol}`
 📥 *Entry:* ${entry_price:.6f}
@@ -109,8 +119,9 @@ def notify_error(error_message: str) -> bool:
     Args:
         error_message: Description of the error
     """
+    version = get_version_label()
     message = f"""
-⚠️ *SNIPER V3 ERROR*
+⚠️ *[{version}] SNIPER ERROR*
 
 {error_message}
 
@@ -127,8 +138,9 @@ def notify_circuit_breaker(consecutive_losses: int, pause_hours: int) -> bool:
         consecutive_losses: Number of consecutive losses
         pause_hours: Hours the bot will pause
     """
+    version = get_version_label()
     message = f"""
-🚨 *CIRCUIT BREAKER ACTIVATED*
+🚨 *[{version}] CIRCUIT BREAKER ACTIVATED*
 
 📉 *Consecutive Losses:* {consecutive_losses}
 ⏸️ *Pausing for:* {pause_hours} hours
@@ -138,19 +150,22 @@ _Bot will resume automatically._
     return send_message(message.strip())
 
 
-def notify_startup(balance: float, mode: str) -> bool:
+def notify_startup(balance: float, mode: str, slots: int = 1) -> bool:
     """
     Send notification when bot starts.
     
     Args:
         balance: Current balance
         mode: "PAPER" or "LIVE"
+        slots: Number of trading slots
     """
+    version = get_version_label()
     message = f"""
-🚀 *SNIPER V3 STARTED*
+🚀 *[{version}] SNIPER STARTED*
 
 💰 *Balance:* ${balance:.2f}
 🎮 *Mode:* {mode} Trading
+🎰 *Slots:* {slots}
 🔍 *Status:* Scanning for opportunities...
 """
     return send_message(message.strip())

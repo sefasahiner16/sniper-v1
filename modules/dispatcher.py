@@ -27,7 +27,7 @@ from config.settings import (
 from modules.scanner import get_scanner
 from modules.analyzer import get_analyzer, AnalysisResult
 from modules.capital_manager import get_capital_manager
-from utils.notifier import send_message, notify_buy, notify_sell
+from utils.notifier import send_message, notify_buy, notify_sell, notify_startup
 from utils.logger import log_trade_entry, log_trade_exit, print_performance_summary
 from utils.helpers import Timer, calculate_pnl_pct
 
@@ -435,8 +435,9 @@ class Dispatcher:
         print(f"Scan Interval: {SCAN_INTERVAL_SECONDS // 60} minutes")
         print("="*50 + "\n")
         
-        # Notify startup
-        send_message(f"🚀 *SNIPER V3 STARTED*\n\n💰 Balance: ${self.shared_state['balance']:.2f}\n🎰 Slots: {MAX_CONCURRENT_SLOTS} concurrent")
+        # Notify startup with version label
+        mode = 'PAPER' if PAPER_TRADING else 'LIVE'
+        notify_startup(self.shared_state['balance'], mode, len(self.slots))
         
         try:
             tasks = [

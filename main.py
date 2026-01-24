@@ -81,7 +81,8 @@ def test_connection() -> bool:
     
     # Test Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "your_bot_token_here":
-        if send_message("🔌 Sniper V3 connection test successful!"):
+        version = os.getenv("BOT_VERSION", "v3").upper()
+        if send_message(f"🔌 Sniper {version} connection test successful!"):
             print("✅ Telegram notifications working")
         else:
             print("⚠️ Telegram configured but could not send message")
