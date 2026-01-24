@@ -412,17 +412,20 @@ class Executor:
     
     def startup(self) -> None:
         """Run startup sequence."""
+        import os
+        version = os.getenv("BOT_VERSION", "v3").upper()
         mode = "PAPER" if self.is_paper_mode else "LIVE"
         balance = self.get_balance()
         
         print(f"\n{'='*50}")
-        print(f"🚀 SNIPER V3 STARTED")
+        print(f"🚀 SNIPER {version} STARTED")
         print(f"{'='*50}")
         print(f"Mode:    {mode}")
         print(f"Balance: ${balance:.2f}")
         print('='*50 + "\n")
         
-        notify_startup(balance, mode)
+        # Only send 1 notification (slots=1 for V2 single-slot mode)
+        notify_startup(balance, mode, slots=1)
         
         # Print current stats
         print_performance_summary()

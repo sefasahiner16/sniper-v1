@@ -108,8 +108,10 @@ def run_v1_legacy_loop():
     """Run the V1 synchronous loop (legacy mode)."""
     import time
     
+    version = os.getenv("BOT_VERSION", "v3").upper()
+    
     print("\n" + "="*50)
-    print("🚀 SNIPER V2 - LEGACY MODE (V1 LOOP)")
+    print(f"🚀 SNIPER {version} - LEGACY MODE (SINGLE SLOT)")
     print("="*50)
     print(f"Mode: {'PAPER TRADING' if PAPER_TRADING else '⚠️ LIVE TRADING'}")
     print(f"Scan Interval: {SCAN_INTERVAL_SECONDS // 60} minutes")
