@@ -1,12 +1,17 @@
 """
-Sniper V2 - The Dispatcher (Async Orchestrator)
-================================================
-Core V2 architecture: Producer-Consumer pattern with asyncio.Queue.
+Sniper V3 - The Dispatcher (Multi-Slot Async Orchestrator)
+===========================================================
+Core V3 architecture: Producer-Consumer pattern with multiple slots.
 
 Components:
 - Watchtower: Async scanner that finds opportunities (Producer)
-- SniperSlot: Async worker that manages positions (Consumer)
-- Dispatcher: Orchestrates everything
+- SniperSlot: Async worker that manages ONE position (Consumer)
+- Dispatcher: Orchestrates multiple slots
+
+V3 Features:
+- 3 concurrent trading slots
+- Independent position management per slot
+- Slot-aware notifications
 """
 
 import asyncio
@@ -17,20 +22,20 @@ from enum import Enum
 
 from config.settings import (
     SCAN_INTERVAL_SECONDS, MAX_CONCURRENT_SLOTS,
-    PAPER_TRADING, INITIAL_BALANCE
+    PAPER_TRADING, INITIAL_BALANCE, BASE_TRADE_SIZE, WHALE_CAP
 )
 from modules.scanner import get_scanner
 from modules.analyzer import get_analyzer, AnalysisResult
-from modules.executor import get_executor
 from modules.capital_manager import get_capital_manager
-from utils.notifier import send_message
-from utils.logger import print_performance_summary
+from utils.notifier import send_message, notify_buy, notify_sell
+from utils.logger import log_trade_entry, log_trade_exit, print_performance_summary
+from utils.helpers import Timer, calculate_pnl_pct
 
 
 class SlotState(Enum):
     """State of a sniper slot."""
     IDLE = "IDLE"
-    HUNTING = "HUNTING"  # Analyzing a candidate
+    ANALYZING = "ANALYZING"
     IN_POSITION = "IN_POSITION"
     EXITING = "EXITING"
 
@@ -41,288 +46,417 @@ class Opportunity:
     symbol: str
     ticker_data: Dict
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
-    score: float = 0.0  # Priority score
+    score: float = 0.0
+
+
+@dataclass
+class SlotPosition:
+    """A position managed by a SniperSlot."""
+    symbol: str
+    trade_id: str
+    entry_price: float
+    quantity: float
+    take_profit: float
+    stop_loss: float
+    slot_id: int
+    trailing_stop: Optional[float] = None
+    trailing_activated: bool = False
+    highest_price: float = field(default=0.0)
+    entry_time: datetime = field(default_factory=datetime.now)
+    timer: Timer = field(default_factory=Timer)
+    
+    def __post_init__(self):
+        self.highest_price = self.entry_price
+        self.timer.start()
+
+
+class SniperSlot:
+    """
+    V3 SniperSlot: Independent trading slot that manages ONE position.
+    
+    Each slot:
+    - Pulls opportunities from the shared queue
+    - Runs full analysis
+    - Manages its own position lifecycle
+    """
+    
+    def __init__(self, slot_id: int, queue: asyncio.Queue, shared_state: Dict):
+        self.slot_id = slot_id
+        self.queue = queue
+        self.shared_state = shared_state  # Shared state between slots
+        self.state = SlotState.IDLE
+        self.position: Optional[SlotPosition] = None
+        
+        self.scanner = get_scanner()
+        self.analyzer = get_analyzer()
+        self.capital_manager = get_capital_manager()
+        
+        # Slot-specific paper balance
+        self.allocated_capital = 0.0
+    
+    def get_slot_name(self) -> str:
+        return f"[SLOT-{self.slot_id}]"
+    
+    async def can_trade(self) -> bool:
+        """Check if this slot can take a new trade."""
+        if self.position is not None:
+            return False
+        
+        if self.capital_manager.is_dead_hours():
+            return False
+        
+        # Check if we have capital available
+        total_allocated = sum(
+            slot.allocated_capital 
+            for slot in self.shared_state.get('slots', [])
+            if slot.position is not None
+        )
+        available = self.shared_state.get('balance', INITIAL_BALANCE) - total_allocated
+        
+        if available < BASE_TRADE_SIZE:
+            return False
+        
+        return True
+    
+    async def enter_position(self, analysis: AnalysisResult) -> bool:
+        """Enter a new position based on analysis."""
+        if not analysis.is_buy_signal:
+            return False
+        
+        symbol = analysis.symbol
+        price = analysis.price
+        
+        # Calculate position size
+        available = self.shared_state.get('balance', INITIAL_BALANCE)
+        slot_size = min(available / MAX_CONCURRENT_SLOTS, WHALE_CAP)
+        quantity = slot_size / price
+        
+        # Create trade ID
+        trade_id = f"SLOT{self.slot_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Create position
+        self.position = SlotPosition(
+            symbol=symbol,
+            trade_id=trade_id,
+            entry_price=price,
+            quantity=quantity,
+            take_profit=analysis.take_profit,
+            stop_loss=analysis.stop_loss,
+            slot_id=self.slot_id
+        )
+        self.allocated_capital = slot_size
+        self.state = SlotState.IN_POSITION
+        
+        print(f"{self.get_slot_name()} 🎯 ENTERED: {symbol} @ ${price:.6f} (Size: ${slot_size:.2f})")
+        
+        # Log and notify
+        log_trade_entry(
+            symbol=symbol,
+            trade_id=trade_id,
+            entry_price=price,
+            quantity=quantity,
+            take_profit=analysis.take_profit,
+            stop_loss=analysis.stop_loss
+        )
+        notify_buy(symbol, price, analysis.take_profit, analysis.stop_loss)
+        
+        return True
+    
+    async def exit_position(self, reason: str, exit_price: Optional[float] = None) -> bool:
+        """Exit the current position."""
+        if self.position is None:
+            return False
+        
+        pos = self.position
+        
+        # Get exit price if not provided
+        if exit_price is None:
+            ticker = self.scanner.exchange.fetch_ticker(pos.symbol)
+            exit_price = ticker.get('last', pos.entry_price)
+        
+        # Calculate P&L
+        pnl_pct = calculate_pnl_pct(pos.entry_price, exit_price)
+        pnl_usd = (exit_price - pos.entry_price) * pos.quantity
+        
+        print(f"{self.get_slot_name()} 🏁 EXITED: {pos.symbol} @ ${exit_price:.6f} | {reason} | P&L: {pnl_pct:+.2f}%")
+        
+        # Update paper balance
+        self.shared_state['balance'] = self.shared_state.get('balance', INITIAL_BALANCE) + pnl_usd
+        
+        # Log and notify
+        log_trade_exit(
+            trade_id=pos.trade_id,
+            exit_price=exit_price,
+            exit_reason=reason,
+            pnl_pct=pnl_pct,
+            pnl_usd=pnl_usd
+        )
+        notify_sell(pos.symbol, pos.entry_price, exit_price, pnl_pct, pnl_usd, reason)
+        
+        # Clear position
+        self.position = None
+        self.allocated_capital = 0.0
+        self.state = SlotState.IDLE
+        
+        return True
+    
+    async def monitor_position(self) -> Optional[str]:
+        """Monitor position and check exit conditions."""
+        if self.position is None:
+            return None
+        
+        pos = self.position
+        
+        try:
+            ticker = self.scanner.exchange.fetch_ticker(pos.symbol)
+            current_price = ticker.get('last', 0)
+        except:
+            return None
+        
+        if current_price == 0:
+            return None
+        
+        # Update highest price (for ratchet trailing stop)
+        if current_price > pos.highest_price:
+            pos.highest_price = current_price
+        
+        pnl_pct = calculate_pnl_pct(pos.entry_price, current_price)
+        
+        # Check exit conditions
+        from config.settings import (
+            TRAILING_STOP_ACTIVATION_PCT, TRAILING_STOP_DISTANCE_PCT,
+            TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, RATCHET_TRAILING_STOP
+        )
+        
+        # Take Profit
+        if current_price >= pos.take_profit:
+            await self.exit_position("TP_HIT", current_price)
+            return "TP_HIT"
+        
+        # Stop Loss
+        if current_price <= pos.stop_loss:
+            await self.exit_position("SL_HIT", current_price)
+            return "SL_HIT"
+        
+        # Trailing Stop activation
+        if not pos.trailing_activated and pnl_pct >= TRAILING_STOP_ACTIVATION_PCT:
+            pos.trailing_activated = True
+            pos.trailing_stop = current_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            print(f"{self.get_slot_name()} 📈 Trailing stop activated @ ${pos.trailing_stop:.6f}")
+        
+        # Ratchet trailing stop update (only moves UP)
+        if pos.trailing_activated and RATCHET_TRAILING_STOP:
+            new_stop = pos.highest_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            if new_stop > pos.trailing_stop:
+                pos.trailing_stop = new_stop
+        
+        # Trailing Stop hit
+        if pos.trailing_activated and pos.trailing_stop and current_price <= pos.trailing_stop:
+            await self.exit_position("TRAILING_STOP", current_price)
+            return "TRAILING_STOP"
+        
+        # Time-based exit
+        if pos.timer.has_exceeded(TIME_EXIT_MINUTES) and pnl_pct < TIME_EXIT_MIN_PROFIT_PCT:
+            await self.exit_position("TIME_EXIT", current_price)
+            return "TIME_EXIT"
+        
+        return None
+    
+    async def run(self):
+        """Main slot loop."""
+        print(f"{self.get_slot_name()} 🎯 Starting...")
+        
+        while self.shared_state.get('running', False):
+            try:
+                # If in position, monitor it
+                if self.position is not None:
+                    await self.monitor_position()
+                    await asyncio.sleep(15)  # Check every 15 seconds
+                    continue
+                
+                # Otherwise, try to get an opportunity
+                if await self.can_trade():
+                    try:
+                        opportunity = await asyncio.wait_for(self.queue.get(), timeout=5.0)
+                        
+                        # Check symbol not already held by another slot
+                        held_symbols = [
+                            s.position.symbol 
+                            for s in self.shared_state.get('slots', [])
+                            if s.position is not None
+                        ]
+                        if opportunity.symbol in held_symbols:
+                            print(f"{self.get_slot_name()} ⏭️ {opportunity.symbol} already held")
+                            self.queue.task_done()
+                            continue
+                        
+                        # Analyze
+                        self.state = SlotState.ANALYZING
+                        result = self.analyzer.analyze(opportunity.symbol, opportunity.ticker_data)
+                        
+                        if result.is_buy_signal:
+                            await self.enter_position(result)
+                        else:
+                            print(f"{self.get_slot_name()} ❌ {opportunity.symbol}: {result.rejection_reason}")
+                        
+                        self.queue.task_done()
+                        
+                    except asyncio.TimeoutError:
+                        pass
+                else:
+                    await asyncio.sleep(5)
+                    
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                print(f"{self.get_slot_name()} Error: {e}")
+                await asyncio.sleep(10)
+        
+        # Cleanup: exit any open position
+        if self.position is not None:
+            await self.exit_position("SHUTDOWN")
 
 
 class Watchtower:
-    """
-    The Watchtower (Producer): Continuously scans for opportunities.
+    """The Watchtower (Producer): Continuously scans for opportunities."""
     
-    Pushes opportunities to the queue without blocking on trade execution.
-    """
-    
-    def __init__(self, queue: asyncio.Queue, scanner=None, analyzer=None):
+    def __init__(self, queue: asyncio.Queue, shared_state: Dict):
         self.queue = queue
-        self.scanner = scanner or get_scanner()
-        self.analyzer = analyzer or get_analyzer()
+        self.shared_state = shared_state
+        self.scanner = get_scanner()
         self.capital_manager = get_capital_manager()
-        self.running = False
     
     async def scan_once(self) -> List[Opportunity]:
-        """
-        Perform a single scan cycle.
-        
-        Returns:
-            List of opportunities found
-        """
-        opportunities = []
-        
-        # Check dead hours
+        """Perform a single scan cycle."""
         if self.capital_manager.is_dead_hours():
             is_dead, minutes_until = self.capital_manager.get_dead_hours_status()
-            print(f"[WATCHTOWER] 🌙 Dead hours. Sleeping for {minutes_until} minutes...")
+            print(f"[WATCHTOWER] 🌙 Dead hours. Resuming in {minutes_until} minutes...")
             return []
         
-        print(f"\n[WATCHTOWER] 🔭 Scanning for opportunities...")
-        
-        # Generate watchlist
+        print(f"\n[WATCHTOWER] 🔭 Scanning...")
         watchlist = self.scanner.generate_watchlist()
         
         if not watchlist:
-            print("[WATCHTOWER] No candidates found")
             return []
         
-        print(f"[WATCHTOWER] Found {len(watchlist)} candidates")
-        
-        # Quick pre-filter and create opportunities
-        for candidate in watchlist:
-            opp = Opportunity(
-                symbol=candidate['symbol'],
-                ticker_data=candidate,
-                score=abs(candidate.get('change_24h', 0))  # Bigger dips = higher priority
+        opportunities = [
+            Opportunity(
+                symbol=c['symbol'],
+                ticker_data=c,
+                score=abs(c.get('change_24h', 0))
             )
-            opportunities.append(opp)
+            for c in watchlist
+        ]
         
+        print(f"[WATCHTOWER] Found {len(opportunities)} candidates")
         return opportunities
     
-    async def scan_loop(self):
+    async def run(self):
         """Main scanning loop."""
-        self.running = True
-        print("[WATCHTOWER] 🔭 Starting scan loop...")
+        print("[WATCHTOWER] 🔭 Starting...")
         
-        while self.running:
+        while self.shared_state.get('running', False):
             try:
                 opportunities = await self.scan_once()
                 
-                # Push opportunities to queue
                 for opp in opportunities:
                     if not self.queue.full():
                         await self.queue.put(opp)
-                        print(f"[WATCHTOWER] 📥 Queued: {opp.symbol}")
-                    else:
-                        print(f"[WATCHTOWER] ⚠️ Queue full, skipping {opp.symbol}")
                 
-                # Wait before next scan
                 await asyncio.sleep(SCAN_INTERVAL_SECONDS)
                 
             except asyncio.CancelledError:
-                print("[WATCHTOWER] Scan loop cancelled")
                 break
             except Exception as e:
-                print(f"[WATCHTOWER] Error in scan loop: {e}")
-                await asyncio.sleep(30)  # Wait before retry
-        
-        self.running = False
-    
-    def stop(self):
-        """Stop the scan loop."""
-        self.running = False
+                print(f"[WATCHTOWER] Error: {e}")
+                await asyncio.sleep(30)
 
 
 class Dispatcher:
-    """
-    The Dispatcher: Orchestrates the entire V2 trading system.
-    
-    Manages:
-    - Watchtower (scanning)
-    - Queue of opportunities
-    - Trade execution through the existing Executor
-    - Vault rebalancing
-    """
+    """V3 Dispatcher: Orchestrates multiple trading slots."""
     
     def __init__(self):
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=50)
-        self.watchtower = Watchtower(self.queue)
-        self.executor = get_executor()
-        self.analyzer = get_analyzer()
+        self.shared_state: Dict = {
+            'running': False,
+            'balance': INITIAL_BALANCE,
+            'slots': []
+        }
+        
+        # Create slots
+        self.slots: List[SniperSlot] = []
+        for i in range(MAX_CONCURRENT_SLOTS):
+            slot = SniperSlot(i + 1, self.queue, self.shared_state)
+            self.slots.append(slot)
+        self.shared_state['slots'] = self.slots
+        
+        self.watchtower = Watchtower(self.queue, self.shared_state)
         self.capital_manager = get_capital_manager()
-        self.running = False
-        
-        # V2: Simple single-slot mode (multi-slot ready for future)
-        self.active_slots = 0
     
-    async def process_opportunity(self, opportunity: Opportunity) -> bool:
-        """
-        Process a single opportunity from the queue.
-        
-        Args:
-            opportunity: The opportunity to analyze and potentially trade
-            
-        Returns:
-            True if a trade was opened
-        """
-        symbol = opportunity.symbol
-        print(f"\n[DISPATCHER] 🎯 Processing: {symbol}")
-        
-        # Check if we can trade
-        if not self.executor.can_trade():
-            print(f"[DISPATCHER] Cannot trade right now")
-            return False
-        
-        # Run full analysis
-        result = self.analyzer.analyze(symbol, ticker_data=opportunity.ticker_data)
-        
-        if result.is_buy_signal:
-            print(f"[DISPATCHER] ✅ BUY SIGNAL for {symbol}")
-            
-            # Enter position through executor
-            success = self.executor.enter_position(result)
-            
-            if success:
-                self.active_slots += 1
-                return True
-        else:
-            print(f"[DISPATCHER] ❌ {symbol}: {result.rejection_reason}")
-        
-        return False
-    
-    async def opportunity_processor(self):
-        """
-        Consumer loop: Process opportunities from the queue.
-        """
-        print("[DISPATCHER] 🎯 Starting opportunity processor...")
-        
-        while self.running:
-            try:
-                # Wait for opportunities
-                opportunity = await asyncio.wait_for(
-                    self.queue.get(), 
-                    timeout=10.0
-                )
-                
-                await self.process_opportunity(opportunity)
-                self.queue.task_done()
-                
-            except asyncio.TimeoutError:
-                # No opportunities in queue, check position
-                if self.executor.current_position:
-                    self.executor.monitor_position()
-                continue
-                
-            except asyncio.CancelledError:
-                print("[DISPATCHER] Processor cancelled")
-                break
-            except Exception as e:
-                print(f"[DISPATCHER] Error processing opportunity: {e}")
-    
-    async def position_monitor(self):
-        """
-        Background task to monitor open positions.
-        """
-        print("[DISPATCHER] 📊 Starting position monitor...")
-        
-        while self.running:
-            try:
-                if self.executor.current_position:
-                    self.executor.monitor_position()
-                    
-                    # Update slot count if position closed
-                    if not self.executor.current_position:
-                        self.active_slots = max(0, self.active_slots - 1)
-                
-                await asyncio.sleep(30)  # Check every 30 seconds
-                
-            except asyncio.CancelledError:
-                break
-            except Exception as e:
-                print(f"[DISPATCHER] Monitor error: {e}")
-                await asyncio.sleep(30)
+    def get_active_positions(self) -> int:
+        """Count active positions across all slots."""
+        return sum(1 for s in self.slots if s.position is not None)
     
     async def vault_manager(self):
-        """
-        Background task to manage vault rebalancing.
-        """
-        print("[DISPATCHER] 💰 Starting vault manager...")
-        
-        while self.running:
+        """Background vault rebalancing."""
+        while self.shared_state.get('running', False):
             try:
-                # Check if vault should rebalance
                 if self.capital_manager.should_rebalance_vault():
-                    usdt_balance = self.executor.get_balance()
+                    balance = self.shared_state.get('balance', INITIAL_BALANCE)
                     btc_balance = self.capital_manager.paper_btc_balance
-                    
-                    action, amount = self.capital_manager.check_vault_action(
-                        usdt_balance, 
-                        btc_balance
-                    )
+                    action, amount = self.capital_manager.check_vault_action(balance, btc_balance)
                     
                     if action != "NONE":
-                        self.capital_manager.execute_vault_action(
-                            action, 
-                            amount, 
-                            is_paper_mode=PAPER_TRADING
-                        )
+                        self.capital_manager.execute_vault_action(action, amount, PAPER_TRADING)
                 
-                # Check once per hour
                 await asyncio.sleep(3600)
-                
             except asyncio.CancelledError:
                 break
             except Exception as e:
-                print(f"[DISPATCHER] Vault error: {e}")
+                print(f"[VAULT] Error: {e}")
                 await asyncio.sleep(3600)
     
     async def run(self):
-        """
-        Main entry point: Run the dispatcher.
-        """
-        self.running = True
+        """Run the V3 dispatcher with multiple slots."""
+        self.shared_state['running'] = True
         
         print("\n" + "="*50)
-        print("🚀 SNIPER V2 - DISPATCHER STARTING")
+        print("🚀 SNIPER V3 - MULTI-SLOT DISPATCHER")
         print("="*50)
         print(f"Mode: {'PAPER TRADING' if PAPER_TRADING else '⚠️ LIVE TRADING'}")
-        print(f"Balance: ${self.executor.get_balance():.2f}")
+        print(f"Balance: ${self.shared_state['balance']:.2f}")
+        print(f"Slots: {MAX_CONCURRENT_SLOTS} concurrent")
         print(f"Scan Interval: {SCAN_INTERVAL_SECONDS // 60} minutes")
         print("="*50 + "\n")
         
-        # Send startup notification
-        self.executor.startup()
+        # Notify startup
+        send_message(f"🚀 *SNIPER V3 STARTED*\n\n💰 Balance: ${self.shared_state['balance']:.2f}\n🎰 Slots: {MAX_CONCURRENT_SLOTS} concurrent")
         
         try:
-            # Create tasks
             tasks = [
-                asyncio.create_task(self.watchtower.scan_loop(), name="watchtower"),
-                asyncio.create_task(self.opportunity_processor(), name="processor"),
-                asyncio.create_task(self.position_monitor(), name="monitor"),
+                asyncio.create_task(self.watchtower.run(), name="watchtower"),
                 asyncio.create_task(self.vault_manager(), name="vault"),
             ]
             
-            # Wait for all tasks (or until cancelled)
+            # Add slot tasks
+            for slot in self.slots:
+                tasks.append(asyncio.create_task(slot.run(), name=f"slot_{slot.slot_id}"))
+            
             await asyncio.gather(*tasks)
             
         except asyncio.CancelledError:
             print("\n[DISPATCHER] Shutting down...")
         finally:
-            self.running = False
-            self.watchtower.stop()
-            
-            # Close any open positions
-            if self.executor.current_position:
-                print("[DISPATCHER] Closing open position...")
-                self.executor.exit_position("SHUTDOWN")
-            
-            # Print final stats
+            self.shared_state['running'] = False
             print_performance_summary()
             print("Goodbye! 👋")
     
     def stop(self):
         """Stop the dispatcher."""
-        self.running = False
-        self.watchtower.stop()
+        self.shared_state['running'] = False
 
 
-# Singleton instance
+# Singleton
 _dispatcher_instance = None
 
 def get_dispatcher() -> Dispatcher:

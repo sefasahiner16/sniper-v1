@@ -1,15 +1,16 @@
 """
-Sniper V2 - Main Entry Point
+Sniper V3 - Main Entry Point
 =============================
 Data-driven cryptocurrency trading bot for MEXC.
 
-V2 Features:
-- Async dispatcher architecture
+V3 Features:
+- Multi-slot async dispatcher (3 concurrent trades)
 - RSI Hook, Zombie Filter, Chameleon Mode
 - Dead hours, Ratchet trailing stop
+- Multi-timeframe confirmation (coming soon)
 
 Usage:
-    python main.py              # Run V2 dispatcher
+    python main.py              # Run V3 multi-slot dispatcher
     python main.py --legacy     # Run V1 sync loop
     python main.py --test       # Test API connection
     python main.py --stats      # Show performance stats
