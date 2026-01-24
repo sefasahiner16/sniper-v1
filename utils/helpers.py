@@ -1,5 +1,5 @@
 """
-Sniper V1 - Helper Utilities
+Sniper V2 - Helper Utilities
 =============================
 Common utility functions used across modules.
 """

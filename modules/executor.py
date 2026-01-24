@@ -416,7 +416,7 @@ class Executor:
         balance = self.get_balance()
         
         print(f"\n{'='*50}")
-        print(f"🚀 SNIPER V1 STARTED")
+        print(f"🚀 SNIPER V2 STARTED")
         print(f"{'='*50}")
         print(f"Mode:    {mode}")
         print(f"Balance: ${balance:.2f}")

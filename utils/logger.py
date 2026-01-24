@@ -1,5 +1,5 @@
 """
-Sniper V1 - Trade Logger
+Sniper V2 - Trade Logger
 =========================
 Logs all trades to JSON for performance analysis.
 """
@@ -166,7 +166,7 @@ def print_performance_summary() -> None:
     stats = get_performance_stats()
     
     print("\n" + "=" * 50)
-    print("📊 SNIPER V1 - PERFORMANCE SUMMARY")
+    print("📊 SNIPER V2 - PERFORMANCE SUMMARY")
     print("=" * 50)
     print(f"Total Trades:     {stats['total_trades']}")
     print(f"Wins / Losses:    {stats['wins']} / {stats['losses']}")

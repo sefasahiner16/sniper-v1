@@ -1,5 +1,5 @@
 """
-Sniper V1 - Technical Indicators
+Sniper V2 - Technical Indicators
 =================================
 Wrapper functions for technical analysis indicators using the 'ta' library.
 """
