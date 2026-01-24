@@ -1,12 +1,14 @@
 """
-Sniper V2 - The Analyzer (Enhanced 5-Layer Filter)
+Sniper V3 - The Analyzer (Enhanced 5-Layer Filter)
 ===================================================
 The brain of the trading system. Implements the enhanced 5-layer safety algorithm.
 
-V2 Features:
-- RSI Hook: Buy on RSI crossing BACK above threshold (not while falling)
+V3 Features:
+- RSI Hook: Buy on RSI crossing BACK above threshold
 - Zombie Filter: Liquidity check integration
 - Chameleon Mode: Dynamic RSI thresholds based on market regime
+- Multi-Timeframe: Confirm on 5m AND 15m charts
+- Volume Capitulation: Detect 5x+ volume panic selling
 """
 
 from dataclasses import dataclass, field
@@ -21,10 +23,12 @@ from config.settings import (
     ZOMBIE_FILTER_ENABLED,
     VOLUME_SPIKE_MULTIPLIER,
     TAKE_PROFIT_ATR_MULTIPLIER, STOP_LOSS_ATR_MULTIPLIER,
-    ANALYSIS_TIMEFRAME, OHLCV_LIMIT
+    ANALYSIS_TIMEFRAME, OHLCV_LIMIT,
+    MULTI_TIMEFRAME_ENABLED, CONFIRM_TIMEFRAME, MULTI_TF_RSI_THRESHOLD,
+    CAPITULATION_ENABLED, CAPITULATION_VOLUME_MULT
 )
 from modules.scanner import get_scanner
-from modules.indicators import analyze_technicals, get_atr_targets
+from modules.indicators import analyze_technicals, get_atr_targets, calculate_rsi
 
 
 @dataclass
@@ -60,6 +64,14 @@ class AnalysisResult:
     
     # V2: Zombie filter data
     liquidity_ratio: Optional[float] = None
+    
+    # V3: Multi-timeframe confirmation
+    multi_tf_ok: bool = False
+    confirm_rsi: Optional[float] = None
+    
+    # V3: Volume capitulation
+    capitulation_ok: bool = False
+    capitulation_volume_ratio: Optional[float] = None
     
     # Targets (set by Layer 5)
     take_profit: Optional[float] = None
@@ -291,14 +303,90 @@ class Analyzer:
         
         return take_profit, stop_loss
     
+    def check_multi_timeframe(self, symbol: str) -> Tuple[bool, Optional[float]]:
+        """
+        V3: Multi-timeframe confirmation.
+        
+        Check if RSI is also oversold on the confirmation timeframe (15m).
+        
+        Args:
+            symbol: Trading pair
+            
+        Returns:
+            Tuple of (passed, confirm_rsi)
+        """
+        if not MULTI_TIMEFRAME_ENABLED:
+            return True, None
+        
+        try:
+            # Fetch 15m OHLCV data
+            ohlcv = self.scanner.get_ohlcv(symbol, timeframe=CONFIRM_TIMEFRAME, limit=50)
+            if ohlcv is None or len(ohlcv) < 20:
+                print(f"[ANALYZER] Multi-TF: Insufficient 15m data")
+                return True, None  # Pass if no data (don't block trade)
+            
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Calculate RSI on confirmation timeframe
+            from modules.indicators import calculate_rsi
+            confirm_rsi_series = calculate_rsi(df)
+            confirm_rsi = float(confirm_rsi_series.iloc[-1]) if pd.notna(confirm_rsi_series.iloc[-1]) else None
+            
+            if confirm_rsi is None:
+                return True, None
+            
+            passed = confirm_rsi <= MULTI_TF_RSI_THRESHOLD
+            
+            if passed:
+                print(f"[ANALYZER] 📊 Multi-TF ✓: 15m RSI {confirm_rsi:.1f} <= {MULTI_TF_RSI_THRESHOLD}")
+            else:
+                print(f"[ANALYZER] 📊 Multi-TF ✗: 15m RSI {confirm_rsi:.1f} > {MULTI_TF_RSI_THRESHOLD}")
+            
+            return passed, confirm_rsi
+            
+        except Exception as e:
+            print(f"[ANALYZER] Multi-TF error: {e}")
+            return True, None  # Pass on error
+    
+    def check_capitulation(self, technicals: dict) -> Tuple[bool, float]:
+        """
+        V3: Volume capitulation detection.
+        
+        Detect if volume is 5x+ average, indicating panic selling exhaustion.
+        
+        Args:
+            technicals: Technical analysis dictionary
+            
+        Returns:
+            Tuple of (is_capitulation, volume_ratio)
+        """
+        if not CAPITULATION_ENABLED:
+            return False, 0.0
+        
+        volume = technicals.get('volume')
+        volume_ma = technicals.get('volume_ma')
+        
+        if volume is None or volume_ma is None or volume_ma == 0:
+            return False, 0.0
+        
+        ratio = volume / volume_ma
+        is_capitulation = ratio >= CAPITULATION_VOLUME_MULT
+        
+        if is_capitulation:
+            print(f"[ANALYZER] 🔥 CAPITULATION ✓: Volume {ratio:.1f}x (>= {CAPITULATION_VOLUME_MULT}x)")
+        
+        return is_capitulation, ratio
+    
     def analyze(self, symbol: str, ticker_data: dict = None) -> AnalysisResult:
         """
         Run full 5-layer analysis on a symbol.
         
-        V2 Enhancements:
+        V3 Enhancements:
         - Market regime detection (Chameleon Mode)
         - Zombie Filter (liquidity check)
         - RSI Hook integration
+        - Multi-timeframe confirmation (5m + 15m)
+        - Volume capitulation detection
         
         Args:
             symbol: Trading pair to analyze (e.g., "SUI/USDT")
@@ -308,7 +396,7 @@ class Analyzer:
             AnalysisResult with all layer results and targets
         """
         print(f"\n{'='*50}")
-        print(f"[ANALYZER] Starting V2 analysis for {symbol}")
+        print(f"[ANALYZER] Starting V3 analysis for {symbol}")
         print('='*50)
         
         result = AnalysisResult(symbol=symbol, is_buy_signal=False)
@@ -340,7 +428,7 @@ class Analyzer:
         result.btc_change = btc_change
         
         if not layer1_ok:
-            result.rejection_reason = "Layer 1: BTC sentiment negative"
+            result.rejection_reason = f"Layer 1: BTC dropping {btc_change:.2f}%"
             return result
         
         # Layer 2: Order Book
@@ -349,27 +437,31 @@ class Analyzer:
         result.bid_ask_ratio = bid_ask_ratio
         
         if not layer2_ok:
-            result.rejection_reason = "Layer 2: Weak order book"
+            result.rejection_reason = f"Layer 2: Weak order book ({bid_ask_ratio:.2f})"
             return result
         
-        # Fetch OHLCV data for remaining layers
-        df = self.scanner.get_ohlcv(symbol, timeframe=ANALYSIS_TIMEFRAME, limit=OHLCV_LIMIT)
-        
-        if df is None or len(df) < 50:
+        # Fetch OHLCV for Layer 3, 4, 5
+        ohlcv = self.scanner.get_ohlcv(symbol, ANALYSIS_TIMEFRAME, OHLCV_LIMIT)
+        if ohlcv is None or len(ohlcv) < 30:
             result.rejection_reason = "Insufficient OHLCV data"
             return result
         
+        df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        technicals = analyze_technicals(df)
+        
+        # Store price and ATR
+        result.price = df['close'].iloc[-1]
+        result.atr = technicals.get('atr')
+        
         # Layer 3: Technical Confluence (V2: with RSI Hook and Chameleon Mode)
-        layer3_ok, technicals, rsi_hook_triggered, effective_threshold = self.check_layer3_technical(
+        layer3_ok, technicals_updated, rsi_hook_triggered, effective_threshold = self.check_layer3_technical(
             df, 
             market_regime=result.market_regime
         )
         result.layer3_technical_ok = layer3_ok
-        result.rsi = technicals.get('rsi')
-        result.rsi_prev = technicals.get('rsi_prev')
-        result.price = technicals.get('close')
-        result.bb_lower = technicals.get('bb_lower')
-        result.atr = technicals.get('atr')
+        result.rsi = technicals_updated.get('rsi')
+        result.rsi_prev = technicals_updated.get('rsi_prev')
+        result.bb_lower = technicals_updated.get('bb_lower')
         result.rsi_hook_ok = rsi_hook_triggered
         result.effective_rsi_threshold = effective_threshold
         
@@ -386,6 +478,20 @@ class Analyzer:
             result.rejection_reason = "Layer 4: Volume too low"
             return result
         
+        # V3: Check volume capitulation
+        is_capitulation, cap_ratio = self.check_capitulation(technicals)
+        result.capitulation_ok = is_capitulation
+        result.capitulation_volume_ratio = cap_ratio
+        
+        # V3: Multi-timeframe confirmation
+        multi_tf_ok, confirm_rsi = self.check_multi_timeframe(symbol)
+        result.multi_tf_ok = multi_tf_ok
+        result.confirm_rsi = confirm_rsi
+        
+        if not multi_tf_ok:
+            result.rejection_reason = f"Multi-TF: 15m RSI too high ({confirm_rsi:.1f})"
+            return result
+        
         # Layer 5: ATR Targets
         if result.price and result.atr:
             take_profit, stop_loss = self.calculate_layer5_targets(result.price, result.atr)
@@ -398,9 +504,19 @@ class Analyzer:
         
         # All layers passed!
         result.is_buy_signal = True
-        hook_str = " + RSI Hook" if rsi_hook_triggered else ""
+        
+        # Build status string
+        extras = []
+        if rsi_hook_triggered:
+            extras.append("RSI Hook")
+        if is_capitulation:
+            extras.append("CAPITULATION")
+        if multi_tf_ok and confirm_rsi:
+            extras.append("Multi-TF")
+        
+        extras_str = " + ".join(extras) if extras else ""
         regime_str = f" [{result.market_regime}]" if result.market_regime != "UNKNOWN" else ""
-        print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{hook_str}{regime_str} for {symbol}")
+        print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{regime_str} {extras_str} for {symbol}")
         
         return result
 

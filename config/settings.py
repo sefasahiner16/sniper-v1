@@ -1,13 +1,14 @@
 """
-Sniper V2 - Configuration Settings
+Sniper V3 - Configuration Settings
 ===================================
 All trading parameters and API configuration loaded from environment variables.
 
-V2 Features:
-- Async dispatcher architecture
-- Dynamic capital management (auto-scaling slots, whale cap, vault)
-- Signal precision (RSI Hook, Zombie Filter, Chameleon Mode)
-- Operational safety (dead hours, ratchet trailing stop)
+V3 Features:
+- Multi-slot concurrent trading (3 slots)
+- Multi-timeframe confirmation (5m + 15m)
+- Volume capitulation detection
+- RSI Hook, Zombie Filter, Chameleon Mode
+- Dead hours, Ratchet trailing stop, Vault
 """
 
 import os
@@ -40,7 +41,7 @@ INITIAL_BALANCE = 12.0  # Starting balance for paper trading (USD)
 BASE_TRADE_SIZE = 5.0  # Base $ per slot for auto-scaling
 WHALE_CAP = 500.0  # Maximum $ per single trade (prevents slippage)
 MIN_SLOT_SIZE = 1.0  # Minimum $ per trade (exchange minimum)
-MAX_CONCURRENT_SLOTS = 10  # Maximum simultaneous positions
+MAX_CONCURRENT_SLOTS = 3  # V3: 3 simultaneous positions
 
 # =============================================================================
 # V2: The Vault (BTC Treasury)
@@ -142,6 +143,18 @@ MAX_POSITION_PCT = 100  # Use 100% of balance per trade (single position model)
 # =============================================================================
 ANALYSIS_TIMEFRAME = "5m"  # Candle timeframe for analysis
 OHLCV_LIMIT = 100  # Number of candles to fetch
+
+# V3: Multi-timeframe confirmation
+MULTI_TIMEFRAME_ENABLED = True
+CONFIRM_TIMEFRAME = "15m"  # Secondary timeframe for confirmation
+MULTI_TF_RSI_THRESHOLD = 40  # RSI must be below this on confirm timeframe
+
+# =============================================================================
+# V3: Volume Capitulation Detection
+# =============================================================================
+CAPITULATION_ENABLED = True
+CAPITULATION_VOLUME_MULT = 5.0  # Volume must be 5x+ average for capitulation
+CAPITULATION_BONUS_SCORE = 0.5  # Extra score for capitulation + RSI Hook
 
 # =============================================================================
 # Logging
