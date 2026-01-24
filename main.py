@@ -38,7 +38,7 @@ from utils.notifier import send_message
 def test_connection() -> bool:
     """Test API connectivity and configuration."""
     print("\n" + "="*50)
-    print("🔌 TESTING CONNECTION (V2)")
+    print("🔌 TESTING CONNECTION (V3)")
     print("="*50)
     
     # Check API keys
@@ -80,7 +80,7 @@ def test_connection() -> bool:
     
     # Test Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "your_bot_token_here":
-        if send_message("🔌 Sniper V2 connection test successful!"):
+        if send_message("🔌 Sniper V3 connection test successful!"):
             print("✅ Telegram notifications working")
         else:
             print("⚠️ Telegram configured but could not send message")
@@ -91,8 +91,8 @@ def test_connection() -> bool:
     return True
 
 
-def run_v2_dispatcher():
-    """Run the V2 async dispatcher."""
+def run_v3_dispatcher():
+    """Run the V3 async dispatcher."""
     dispatcher = get_dispatcher()
     
     try:
@@ -184,12 +184,13 @@ def run_v1_legacy_loop():
 
 def main():
     """Entry point."""
-    parser = argparse.ArgumentParser(description="Sniper V2 Trading Bot")
+    parser = argparse.ArgumentParser(description="Sniper V3 Trading Bot")
     parser.add_argument('--test', action='store_true', help='Test API connection')
     parser.add_argument('--stats', action='store_true', help='Show performance stats')
     parser.add_argument('--scan', action='store_true', help='Run a single scan (no trading)')
-    parser.add_argument('--legacy', action='store_true', help='Run V1 sync loop instead of V2 dispatcher')
+    parser.add_argument('--legacy', action='store_true', help='Run V1 sync loop')
     parser.add_argument('--regime', action='store_true', help='Show current market regime')
+    parser.add_argument('--version', type=str, choices=['v2', 'v3'], default='v3', help='Run V2 (single slot) or V3 (multi-slot)')
     args = parser.parse_args()
     
     if args.test:
@@ -233,11 +234,18 @@ def main():
         run_v1_legacy_loop()
     
     else:
-        # V2 async dispatcher (default)
+        # V2 or V3 based on --version flag
         if not test_connection():
             print("\n❌ Connection test failed. Fix issues above and retry.")
             sys.exit(1)
-        run_v2_dispatcher()
+        
+        if args.version == 'v2':
+            # V2: Single-slot mode (uses legacy loop with V2 features)
+            print("\n🔄 Running in V2 mode (single-slot)...")
+            run_v1_legacy_loop()  # V2 features are integrated into legacy loop
+        else:
+            # V3: Multi-slot mode (default)
+            run_v3_dispatcher()
 
 
 if __name__ == "__main__":

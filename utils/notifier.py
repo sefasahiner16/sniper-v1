@@ -1,5 +1,5 @@
 """
-Sniper V2 - Telegram Notification Module
+Sniper V3 - Telegram Notification Module
 =========================================
 Sends trade notifications to Telegram.
 """
@@ -110,7 +110,7 @@ def notify_error(error_message: str) -> bool:
         error_message: Description of the error
     """
     message = f"""
-⚠️ *SNIPER V2 ERROR*
+⚠️ *SNIPER V3 ERROR*
 
 {error_message}
 
@@ -147,7 +147,7 @@ def notify_startup(balance: float, mode: str) -> bool:
         mode: "PAPER" or "LIVE"
     """
     message = f"""
-🚀 *SNIPER V2 STARTED*
+🚀 *SNIPER V3 STARTED*
 
 💰 *Balance:* ${balance:.2f}
 🎮 *Mode:* {mode} Trading
