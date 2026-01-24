@@ -383,15 +383,21 @@ class Dispatcher:
             'slots': []
         }
         
-        # Create slots
+        self.capital_manager = get_capital_manager()
+        
+        # V3: Create slots DYNAMICALLY based on balance
+        # With $12 and BASE_TRADE_SIZE=$5, this creates 2 slots
+        # As balance grows, more slots are added (up to MAX_CONCURRENT_SLOTS)
+        initial_slot_count = self.capital_manager.calculate_slot_count(INITIAL_BALANCE)
+        print(f"[DISPATCHER] Creating {initial_slot_count} slots for ${INITIAL_BALANCE:.2f} balance")
+        
         self.slots: List[SniperSlot] = []
-        for i in range(MAX_CONCURRENT_SLOTS):
+        for i in range(initial_slot_count):
             slot = SniperSlot(i + 1, self.queue, self.shared_state)
             self.slots.append(slot)
         self.shared_state['slots'] = self.slots
         
         self.watchtower = Watchtower(self.queue, self.shared_state)
-        self.capital_manager = get_capital_manager()
     
     def get_active_positions(self) -> int:
         """Count active positions across all slots."""
