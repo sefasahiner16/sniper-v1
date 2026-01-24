@@ -188,8 +188,7 @@ class SniperSlot:
             trade_id=pos.trade_id,
             exit_price=exit_price,
             exit_reason=reason,
-            pnl_pct=pnl_pct,
-            pnl_usd=pnl_usd
+            balance_after=self.shared_state['balance']
         )
         notify_sell(pos.symbol, pos.entry_price, exit_price, pnl_pct, pnl_usd, reason)
         
