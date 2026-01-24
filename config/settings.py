@@ -1,7 +1,13 @@
 """
-Sniper V1 - Configuration Settings
+Sniper V2 - Configuration Settings
 ===================================
 All trading parameters and API configuration loaded from environment variables.
+
+V2 Features:
+- Async dispatcher architecture
+- Dynamic capital management (auto-scaling slots, whale cap, vault)
+- Signal precision (RSI Hook, Zombie Filter, Chameleon Mode)
+- Operational safety (dead hours, ratchet trailing stop)
 """
 
 import os
@@ -29,6 +35,30 @@ PAPER_TRADING = True  # Set to False when ready for live trading
 INITIAL_BALANCE = 12.0  # Starting balance for paper trading (USD)
 
 # =============================================================================
+# V2: Dynamic Capital Management
+# =============================================================================
+BASE_TRADE_SIZE = 5.0  # Base $ per slot for auto-scaling
+WHALE_CAP = 500.0  # Maximum $ per single trade (prevents slippage)
+MIN_SLOT_SIZE = 1.0  # Minimum $ per trade (exchange minimum)
+MAX_CONCURRENT_SLOTS = 10  # Maximum simultaneous positions
+
+# =============================================================================
+# V2: The Vault (BTC Treasury)
+# =============================================================================
+VAULT_ENABLED = True  # Enable automatic BTC treasury management
+VAULT_OVERFLOW_MULTIPLIER = 2.0  # Buy BTC when balance > operational_cap * this
+VAULT_CRITICAL_LEVEL = 0.3  # Sell BTC when balance < operational_cap * this
+VAULT_REBALANCE_HOUR_UTC = 2  # Daily vault rebalance hour (02:00 UTC)
+OPERATIONAL_CAP = 100.0  # Target operational USDT balance
+
+# =============================================================================
+# V2: Dead Hours (Shift System)
+# =============================================================================
+DEAD_HOURS_ENABLED = True  # Enable trading pause during low volume hours
+DEAD_HOURS_START_UTC = 3  # Trading pause start (03:00 UTC = 06:00 Turkey)
+DEAD_HOURS_END_UTC = 8  # Trading pause end (08:00 UTC = 11:00 Turkey)
+
+# =============================================================================
 # Scanner Settings
 # =============================================================================
 SCAN_INTERVAL_SECONDS = 300  # 5 minutes between scans
@@ -38,9 +68,21 @@ MAX_PRICE_CHANGE_PCT = -3.0   # Maximum negative change (not too crashed)
 WATCHLIST_SIZE = 20  # Number of candidates to analyze
 
 # =============================================================================
-# Layer 1: BTC Sentiment
+# V2: Zombie Filter (Liquidity Check)
+# =============================================================================
+ZOMBIE_FILTER_ENABLED = True
+ZOMBIE_VOLUME_RATIO = 0.1  # Min 24h volume / market cap ratio
+
+# =============================================================================
+# Layer 1: BTC Sentiment + V2 Chameleon Mode
 # =============================================================================
 BTC_SENTIMENT_THRESHOLD = -0.5  # Abort if BTC drops more than this %
+BTC_SMA_PERIOD = 50  # BTC SMA for market regime detection
+
+# V2: Chameleon Mode - dynamic thresholds based on market regime
+CHAMELEON_MODE_ENABLED = True
+RSI_BULL_THRESHOLD = 40  # Looser RSI in bull market (BTC > SMA50)
+RSI_BEAR_THRESHOLD = 25  # Stricter RSI in bear market (BTC < SMA50)
 
 # =============================================================================
 # Layer 2: Order Book Analysis
@@ -49,12 +91,16 @@ ORDERBOOK_DEPTH = 20  # Number of levels to analyze
 ORDERBOOK_BID_ASK_RATIO = 1.5  # Minimum bid/ask volume ratio
 
 # =============================================================================
-# Layer 3: Technical Indicators
+# Layer 3: Technical Indicators + V2 RSI Hook
 # =============================================================================
 RSI_PERIOD = 14
-RSI_OVERSOLD = 30  # RSI must be below this
+RSI_OVERSOLD = 30  # Base RSI threshold (modified by Chameleon Mode)
 BOLLINGER_PERIOD = 20
 BOLLINGER_STD = 2
+
+# V2: RSI Hook - buy on RSI crossing BACK above threshold, not while falling
+RSI_HOOK_ENABLED = True
+RSI_HOOK_THRESHOLD = 30  # RSI must cross back above this
 
 # =============================================================================
 # Layer 4: Volume Validation
@@ -70,11 +116,18 @@ TAKE_PROFIT_ATR_MULTIPLIER = 2.0  # TP = Entry + (ATR * this)
 STOP_LOSS_ATR_MULTIPLIER = 1.0    # SL = Entry - (ATR * this)
 
 # =============================================================================
-# Position Management
+# Position Management + V2 Ratchet Trailing Stop
 # =============================================================================
 TRAILING_STOP_ACTIVATION_PCT = 1.0  # Activate trailing stop after 1% profit
 TRAILING_STOP_DISTANCE_PCT = 0.5    # Trail 0.5% behind price
-TIME_EXIT_MINUTES = 45  # Exit if stagnant for this long
+
+# V2: Ratchet mode - trailing stop only moves UP, never down
+RATCHET_TRAILING_STOP = True
+
+# V2: Time-based exit (stagnant trade timeout)
+TIME_EXIT_MINUTES = 45  # Exit if no profit after this many minutes
+TIME_EXIT_MIN_PROFIT_PCT = 1.0  # Minimum profit % to stay in trade past timeout
+
 HARD_STOP_LOSS_PCT = 5.0  # Maximum loss per trade
 
 # =============================================================================
@@ -95,3 +148,4 @@ OHLCV_LIMIT = 100  # Number of candles to fetch
 # =============================================================================
 LOG_FILE = "data/trades.json"
 LOG_LEVEL = "INFO"
+

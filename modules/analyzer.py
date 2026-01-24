@@ -1,17 +1,24 @@
 """
-Sniper V1 - The Analyzer (5-Layer Filter)
-==========================================
-The brain of the trading system. Implements the 5-layer safety algorithm.
+Sniper V2 - The Analyzer (Enhanced 5-Layer Filter)
+===================================================
+The brain of the trading system. Implements the enhanced 5-layer safety algorithm.
+
+V2 Features:
+- RSI Hook: Buy on RSI crossing BACK above threshold (not while falling)
+- Zombie Filter: Liquidity check integration
+- Chameleon Mode: Dynamic RSI thresholds based on market regime
 """
 
-from dataclasses import dataclass
-from typing import Optional
+from dataclasses import dataclass, field
+from typing import Optional, Tuple
 import pandas as pd
 
 from config.settings import (
     BTC_SENTIMENT_THRESHOLD,
     ORDERBOOK_DEPTH, ORDERBOOK_BID_ASK_RATIO,
-    RSI_OVERSOLD,
+    RSI_OVERSOLD, RSI_HOOK_ENABLED, RSI_HOOK_THRESHOLD,
+    RSI_BULL_THRESHOLD, RSI_BEAR_THRESHOLD, CHAMELEON_MODE_ENABLED,
+    ZOMBIE_FILTER_ENABLED,
     VOLUME_SPIKE_MULTIPLIER,
     TAKE_PROFIT_ATR_MULTIPLIER, STOP_LOSS_ATR_MULTIPLIER,
     ANALYSIS_TIMEFRAME, OHLCV_LIMIT
@@ -33,14 +40,26 @@ class AnalysisResult:
     layer4_volume_ok: bool = False
     layer5_targets_set: bool = False
     
+    # V2: Additional layer results
+    zombie_filter_ok: bool = False  # Liquidity check
+    rsi_hook_ok: bool = False  # RSI crossing confirmation
+    
     # Data
     btc_change: Optional[float] = None
     bid_ask_ratio: Optional[float] = None
     rsi: Optional[float] = None
+    rsi_prev: Optional[float] = None  # V2: Previous RSI for hook detection
     price: Optional[float] = None
     bb_lower: Optional[float] = None
     volume_ratio: Optional[float] = None
     atr: Optional[float] = None
+    
+    # V2: Market regime
+    market_regime: str = "UNKNOWN"  # BULL, BEAR, or UNKNOWN
+    effective_rsi_threshold: float = RSI_OVERSOLD  # Dynamic threshold
+    
+    # V2: Zombie filter data
+    liquidity_ratio: Optional[float] = None
     
     # Targets (set by Layer 5)
     take_profit: Optional[float] = None
@@ -51,12 +70,15 @@ class AnalysisResult:
     
     def __str__(self) -> str:
         status = "✅ BUY SIGNAL" if self.is_buy_signal else f"❌ REJECTED: {self.rejection_reason}"
+        rsi_hook_str = " (Hook ✓)" if self.rsi_hook_ok else ""
+        regime_str = f" [{self.market_regime}]" if self.market_regime != "UNKNOWN" else ""
         return f"""
-[{self.symbol}] {status}
-├── Layer 1 (BTC):      {'✓' if self.layer1_btc_ok else '✗'} BTC Change: {self.btc_change:.2f}%
+[{self.symbol}] {status}{regime_str}
+├── Layer 1 (BTC):       {'✓' if self.layer1_btc_ok else '✗'} BTC Change: {self.btc_change:.2f}%
 ├── Layer 2 (OrderBook): {'✓' if self.layer2_orderbook_ok else '✗'} Bid/Ask: {self.bid_ask_ratio:.2f}
-├── Layer 3 (Technical): {'✓' if self.layer3_technical_ok else '✗'} RSI: {self.rsi:.1f}, Price: {self.price:.6f}, BB Lower: {self.bb_lower:.6f}
+├── Layer 3 (Technical): {'✓' if self.layer3_technical_ok else '✗'} RSI: {self.rsi:.1f}{rsi_hook_str}, Threshold: {self.effective_rsi_threshold}
 ├── Layer 4 (Volume):    {'✓' if self.layer4_volume_ok else '✗'} Volume Ratio: {self.volume_ratio:.2f}x
+├── Zombie Filter:       {'✓' if self.zombie_filter_ok else '✗'} Liquidity: {self.liquidity_ratio:.3f if self.liquidity_ratio else 'N/A'}
 └── Layer 5 (Targets):   {'✓' if self.layer5_targets_set else '✗'} TP: {self.take_profit:.6f}, SL: {self.stop_loss:.6f}
 """
 
@@ -123,21 +145,30 @@ class Analyzer:
         
         return passed, ratio
     
-    def check_layer3_technical(self, df: pd.DataFrame) -> tuple[bool, dict]:
+    def check_layer3_technical(
+        self, 
+        df: pd.DataFrame, 
+        market_regime: str = "UNKNOWN"
+    ) -> Tuple[bool, dict, bool, float]:
         """
         Layer 3: Check RSI + Bollinger Bands confluence.
         
+        V2 Enhancements:
+        - RSI Hook: Buy when RSI crosses BACK above threshold (not while falling)
+        - Chameleon Mode: Dynamic RSI threshold based on market regime
+        
         Args:
             df: OHLCV DataFrame
+            market_regime: Current market regime (BULL, BEAR, UNKNOWN)
             
         Returns:
-            Tuple of (passed, technicals_dict)
+            Tuple of (passed, technicals_dict, rsi_hook_triggered, effective_threshold)
         """
         technicals = analyze_technicals(df)
         
         if "error" in technicals:
             print(f"[ANALYZER] Layer 3: {technicals['error']}")
-            return False, technicals
+            return False, technicals, False, RSI_OVERSOLD
         
         rsi = technicals.get('rsi')
         close = technicals.get('close')
@@ -145,24 +176,69 @@ class Analyzer:
         
         if rsi is None or close is None or bb_lower is None:
             print("[ANALYZER] Layer 3: Missing indicator data")
-            return False, technicals
+            return False, technicals, False, RSI_OVERSOLD
         
-        rsi_oversold = rsi < RSI_OVERSOLD
+        # V2: Chameleon Mode - adjust RSI threshold based on market regime
+        if CHAMELEON_MODE_ENABLED:
+            if market_regime == "BULL":
+                rsi_threshold = RSI_BULL_THRESHOLD
+            elif market_regime == "BEAR":
+                rsi_threshold = RSI_BEAR_THRESHOLD
+            else:
+                rsi_threshold = RSI_OVERSOLD
+        else:
+            rsi_threshold = RSI_OVERSOLD
+        
+        # V2: RSI Hook - check if RSI is crossing BACK above threshold
+        rsi_hook_triggered = False
+        rsi_prev = None
+        
+        if RSI_HOOK_ENABLED:
+            # Calculate previous RSI from the dataframe
+            from modules.indicators import calculate_rsi
+            rsi_series = calculate_rsi(df)
+            
+            if len(rsi_series) >= 2:
+                rsi_prev = float(rsi_series.iloc[-2]) if pd.notna(rsi_series.iloc[-2]) else None
+                
+                if rsi_prev is not None:
+                    # RSI Hook: was below threshold, now at or above
+                    rsi_hook_triggered = (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD)
+                    
+                    if rsi_hook_triggered:
+                        print(f"[ANALYZER] 🪝 RSI Hook triggered: {rsi_prev:.1f} → {rsi:.1f}")
+        
+        # Store previous RSI in technicals for result
+        technicals['rsi_prev'] = rsi_prev
+        
+        # Check conditions
         below_bb = close <= bb_lower
         
-        passed = rsi_oversold and below_bb
+        # V2: Accept if RSI Hook triggered OR traditional oversold
+        if RSI_HOOK_ENABLED:
+            # RSI Hook mode: either crossing back up from oversold OR currently oversold with hook
+            rsi_condition = rsi_hook_triggered or (rsi < rsi_threshold and rsi_hook_triggered is False)
+        else:
+            # Traditional mode: just check if oversold
+            rsi_condition = rsi < rsi_threshold
+        
+        passed = rsi_condition and below_bb
         
         if passed:
-            print(f"[ANALYZER] Layer 3 ✓: RSI {rsi:.1f} < {RSI_OVERSOLD} AND Price {close:.6f} <= BB Lower {bb_lower:.6f}")
+            hook_str = " (RSI Hook ✓)" if rsi_hook_triggered else ""
+            print(f"[ANALYZER] Layer 3 ✓: RSI {rsi:.1f}{hook_str}, Threshold: {rsi_threshold}, BB Lower: {bb_lower:.6f}")
         else:
             reasons = []
-            if not rsi_oversold:
-                reasons.append(f"RSI {rsi:.1f} >= {RSI_OVERSOLD}")
+            if not rsi_condition:
+                if RSI_HOOK_ENABLED:
+                    reasons.append(f"RSI {rsi:.1f} not hooking (prev: {rsi_prev:.1f if rsi_prev else 'N/A'})")
+                else:
+                    reasons.append(f"RSI {rsi:.1f} >= {rsi_threshold}")
             if not below_bb:
                 reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f}")
             print(f"[ANALYZER] Layer 3 ✗: {', '.join(reasons)}")
         
-        return passed, technicals
+        return passed, technicals, rsi_hook_triggered, rsi_threshold
     
     def check_layer4_volume(self, technicals: dict) -> tuple[bool, float]:
         """
@@ -215,23 +291,48 @@ class Analyzer:
         
         return take_profit, stop_loss
     
-    def analyze(self, symbol: str) -> AnalysisResult:
+    def analyze(self, symbol: str, ticker_data: dict = None) -> AnalysisResult:
         """
         Run full 5-layer analysis on a symbol.
         
-        This is the main entry point for analysis.
+        V2 Enhancements:
+        - Market regime detection (Chameleon Mode)
+        - Zombie Filter (liquidity check)
+        - RSI Hook integration
         
         Args:
             symbol: Trading pair to analyze (e.g., "SUI/USDT")
+            ticker_data: Optional ticker data to avoid refetching
             
         Returns:
             AnalysisResult with all layer results and targets
         """
         print(f"\n{'='*50}")
-        print(f"[ANALYZER] Starting 5-layer analysis for {symbol}")
+        print(f"[ANALYZER] Starting V2 analysis for {symbol}")
         print('='*50)
         
         result = AnalysisResult(symbol=symbol, is_buy_signal=False)
+        
+        # V2: Get market regime for Chameleon Mode
+        if CHAMELEON_MODE_ENABLED:
+            regime, btc_price, btc_sma = self.scanner.get_market_regime()
+            result.market_regime = regime
+            if regime != "UNKNOWN":
+                print(f"[ANALYZER] 🦎 Chameleon Mode: {regime} market (BTC: ${btc_price:,.0f}, SMA50: ${btc_sma:,.0f})")
+        
+        # V2: Zombie Filter (Liquidity Check)
+        if ZOMBIE_FILTER_ENABLED:
+            zombie_ok, liquidity_ratio = self.scanner.check_zombie_filter(symbol, ticker_data)
+            result.zombie_filter_ok = zombie_ok
+            result.liquidity_ratio = liquidity_ratio
+            
+            if not zombie_ok:
+                result.rejection_reason = f"Zombie Filter: Low liquidity ({liquidity_ratio:.3f})"
+                print(f"[ANALYZER] 🧟 Zombie Filter ✗: Liquidity ratio {liquidity_ratio:.3f} < {ZOMBIE_FILTER_ENABLED}")
+                return result
+            print(f"[ANALYZER] 🧟 Zombie Filter ✓: Liquidity ratio {liquidity_ratio:.3f}")
+        else:
+            result.zombie_filter_ok = True
         
         # Layer 1: BTC Sentiment
         layer1_ok, btc_change = self.check_layer1_btc_sentiment()
@@ -258,13 +359,19 @@ class Analyzer:
             result.rejection_reason = "Insufficient OHLCV data"
             return result
         
-        # Layer 3: Technical Confluence
-        layer3_ok, technicals = self.check_layer3_technical(df)
+        # Layer 3: Technical Confluence (V2: with RSI Hook and Chameleon Mode)
+        layer3_ok, technicals, rsi_hook_triggered, effective_threshold = self.check_layer3_technical(
+            df, 
+            market_regime=result.market_regime
+        )
         result.layer3_technical_ok = layer3_ok
         result.rsi = technicals.get('rsi')
+        result.rsi_prev = technicals.get('rsi_prev')
         result.price = technicals.get('close')
         result.bb_lower = technicals.get('bb_lower')
         result.atr = technicals.get('atr')
+        result.rsi_hook_ok = rsi_hook_triggered
+        result.effective_rsi_threshold = effective_threshold
         
         if not layer3_ok:
             result.rejection_reason = "Layer 3: Technical conditions not met"
@@ -291,7 +398,9 @@ class Analyzer:
         
         # All layers passed!
         result.is_buy_signal = True
-        print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL for {symbol}")
+        hook_str = " + RSI Hook" if rsi_hook_triggered else ""
+        regime_str = f" [{result.market_regime}]" if result.market_regime != "UNKNOWN" else ""
+        print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{hook_str}{regime_str} for {symbol}")
         
         return result
 

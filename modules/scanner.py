@@ -1,17 +1,24 @@
 """
-Sniper V1 - Market Scanner
+Sniper V2 - Market Scanner
 ===========================
 Scans MEXC for trading candidates based on volume and volatility.
+
+V2 Features:
+- Zombie Filter (liquidity check)
+- Chameleon Mode (market regime detection)
+- BTC SMA calculation
 """
 
 import ccxt
 import pandas as pd
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, Tuple
 
 from config.settings import (
     MEXC_API_KEY, MEXC_SECRET_KEY,
     MIN_24H_VOLUME_USDT, MIN_PRICE_CHANGE_PCT, MAX_PRICE_CHANGE_PCT,
-    WATCHLIST_SIZE
+    WATCHLIST_SIZE,
+    ZOMBIE_FILTER_ENABLED, ZOMBIE_VOLUME_RATIO,
+    CHAMELEON_MODE_ENABLED, BTC_SMA_PERIOD
 )
 
 
@@ -270,6 +277,174 @@ class Scanner:
         except Exception as e:
             print(f"[SCANNER] Error fetching balance: {e}")
             return 0.0
+    
+    # =========================================================================
+    # V2: Zombie Filter (Liquidity Check)
+    # =========================================================================
+    
+    def estimate_market_cap(self, symbol: str, ticker_data: Optional[Dict] = None) -> Optional[float]:
+        """
+        Estimate market cap for a symbol.
+        
+        Note: MEXC doesn't provide market cap directly, so we estimate
+        using circulating supply data if available, or use volume as proxy.
+        
+        Args:
+            symbol: Trading pair
+            ticker_data: Optional ticker data (to avoid refetching)
+            
+        Returns:
+            Estimated market cap in USDT or None
+        """
+        try:
+            self._ensure_markets_loaded()
+            market = self.exchange.markets.get(symbol)
+            
+            if not market:
+                return None
+            
+            # Get current price
+            if ticker_data:
+                price = ticker_data.get('last', 0)
+            else:
+                ticker = self.exchange.fetch_ticker(symbol)
+                price = ticker.get('last', 0)
+            
+            if price == 0:
+                return None
+            
+            # Try to get info from market data
+            # Note: Most exchanges don't provide circulating supply
+            # We use 24h volume as a liquidity proxy instead
+            # The zombie filter will use volume/estimated_mcap ratio
+            
+            # For now, estimate market cap as 100x the 24h volume
+            # This is a rough heuristic - real market caps are typically
+            # 10-1000x daily volume depending on the asset
+            if ticker_data:
+                volume = ticker_data.get('quoteVolume', 0)
+            else:
+                volume = 0
+            
+            if volume > 0:
+                # Assume market cap is roughly 100x daily volume
+                # This will be refined as we get more data
+                estimated_mcap = volume * 100
+                return estimated_mcap
+            
+            return None
+            
+        except Exception as e:
+            print(f"[SCANNER] Error estimating market cap for {symbol}: {e}")
+            return None
+    
+    def check_zombie_filter(self, symbol: str, ticker_data: Optional[Dict] = None) -> Tuple[bool, float]:
+        """
+        V2 Zombie Filter: Check if coin has sufficient liquidity.
+        
+        Logic: 24h Volume / Market Cap > ZOMBIE_VOLUME_RATIO
+        
+        Rejects "dead" coins with no real volume.
+        
+        Args:
+            symbol: Trading pair
+            ticker_data: Optional ticker data
+            
+        Returns:
+            Tuple of (passed, volume_to_mcap_ratio)
+        """
+        if not ZOMBIE_FILTER_ENABLED:
+            return True, 1.0
+        
+        try:
+            if ticker_data:
+                volume_24h = ticker_data.get('quoteVolume', 0) or 0
+            else:
+                ticker = self.exchange.fetch_ticker(symbol)
+                volume_24h = ticker.get('quoteVolume', 0) or 0
+            
+            market_cap = self.estimate_market_cap(symbol, ticker_data)
+            
+            if market_cap is None or market_cap == 0:
+                # Can't calculate ratio, be conservative and pass
+                return True, 0.0
+            
+            ratio = volume_24h / market_cap
+            passed = ratio >= ZOMBIE_VOLUME_RATIO
+            
+            return passed, ratio
+            
+        except Exception as e:
+            print(f"[SCANNER] Zombie filter error for {symbol}: {e}")
+            return True, 0.0  # Be permissive on error
+    
+    # =========================================================================
+    # V2: Chameleon Mode (Market Regime Detection)
+    # =========================================================================
+    
+    def get_btc_sma(self, period: int = BTC_SMA_PERIOD) -> Optional[float]:
+        """
+        Get BTC Simple Moving Average for market regime detection.
+        
+        Args:
+            period: SMA period (default 50)
+            
+        Returns:
+            BTC SMA value or None
+        """
+        try:
+            # Fetch daily candles for SMA calculation
+            ohlcv = self.exchange.fetch_ohlcv('BTC/USDT', '1d', limit=period + 5)
+            
+            if len(ohlcv) < period:
+                return None
+            
+            # Calculate SMA from close prices
+            closes = [candle[4] for candle in ohlcv[-period:]]
+            sma = sum(closes) / len(closes)
+            
+            return sma
+            
+        except Exception as e:
+            print(f"[SCANNER] Error calculating BTC SMA: {e}")
+            return None
+    
+    def get_market_regime(self) -> Tuple[str, Optional[float], Optional[float]]:
+        """
+        V2 Chameleon Mode: Detect current market regime.
+        
+        Logic:
+        - BTC > SMA50 → Bull Market
+        - BTC < SMA50 → Bear Market
+        
+        Returns:
+            Tuple of (regime, btc_price, btc_sma)
+            regime is one of: "BULL", "BEAR", "UNKNOWN"
+        """
+        if not CHAMELEON_MODE_ENABLED:
+            return "UNKNOWN", None, None
+        
+        try:
+            # Get current BTC price
+            ticker = self.exchange.fetch_ticker('BTC/USDT')
+            btc_price = ticker.get('last', 0)
+            
+            # Get BTC SMA
+            btc_sma = self.get_btc_sma()
+            
+            if btc_price == 0 or btc_sma is None:
+                return "UNKNOWN", btc_price, btc_sma
+            
+            if btc_price > btc_sma:
+                regime = "BULL"
+            else:
+                regime = "BEAR"
+            
+            return regime, btc_price, btc_sma
+            
+        except Exception as e:
+            print(f"[SCANNER] Error detecting market regime: {e}")
+            return "UNKNOWN", None, None
 
 
 # Singleton instance

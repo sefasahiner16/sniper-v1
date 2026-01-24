@@ -1,7 +1,12 @@
 """
-Sniper V1 - The Executor (State Machine)
+Sniper V2 - The Executor (State Machine)
 =========================================
 Manages trade lifecycle, position monitoring, and risk controls.
+
+V2 Features:
+- Ratchet Trailing Stop (only moves UP, never down)
+- Dead hours integration
+- Enhanced time-based exit
 """
 
 import time
@@ -13,11 +18,13 @@ from datetime import datetime
 from config.settings import (
     PAPER_TRADING, INITIAL_BALANCE,
     TRAILING_STOP_ACTIVATION_PCT, TRAILING_STOP_DISTANCE_PCT,
-    TIME_EXIT_MINUTES, HARD_STOP_LOSS_PCT,
-    MAX_CONSECUTIVE_LOSSES, CIRCUIT_BREAKER_HOURS
+    TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, HARD_STOP_LOSS_PCT,
+    MAX_CONSECUTIVE_LOSSES, CIRCUIT_BREAKER_HOURS,
+    RATCHET_TRAILING_STOP
 )
 from modules.scanner import get_scanner
 from modules.analyzer import AnalysisResult
+from modules.capital_manager import get_capital_manager
 from utils.logger import (
     log_trade_entry, log_trade_exit, get_open_trade,
     get_performance_stats, print_performance_summary
@@ -121,7 +128,11 @@ class Executor:
         return True
     
     def can_trade(self) -> bool:
-        """Check if we can open a new trade."""
+        """
+        Check if we can open a new trade.
+        
+        V2: Includes dead hours check.
+        """
         # Already in a position?
         if self.current_position is not None:
             return False
@@ -130,6 +141,13 @@ class Executor:
         open_trade = get_open_trade()
         if open_trade:
             print(f"[EXECUTOR] Found open trade: {open_trade['symbol']}")
+            return False
+        
+        # V2: Check dead hours (Shift System)
+        capital_manager = get_capital_manager()
+        is_dead, minutes_until = capital_manager.get_dead_hours_status()
+        if is_dead:
+            print(f"[EXECUTOR] 🌙 Dead Hours active. Trading resumes in {minutes_until} minutes.")
             return False
         
         # Check circuit breaker
@@ -223,7 +241,12 @@ class Executor:
             return False
     
     def update_trailing_stop(self, current_price: float) -> None:
-        """Update trailing stop based on current price."""
+        """
+        Update trailing stop based on current price.
+        
+        V2 Ratchet Mode: Trailing stop only moves UP, never down.
+        This prevents a winning trade from turning into a loss.
+        """
         if self.current_position is None:
             return
         
@@ -242,12 +265,21 @@ class Executor:
             pos.trailing_stop = current_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
             print(f"[EXECUTOR] 📈 Trailing stop ACTIVATED at ${pos.trailing_stop:.6f}")
         
-        # Update trailing stop if price continues up
-        elif pos.trailing_activated and current_price > pos.highest_price:
-            new_trailing = current_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
-            if new_trailing > pos.trailing_stop:
-                pos.trailing_stop = new_trailing
-                print(f"[EXECUTOR] 📈 Trailing stop moved to ${pos.trailing_stop:.6f}")
+        # V2 Ratchet Mode: Only move trailing stop UP, never down
+        elif pos.trailing_activated:
+            new_trailing = pos.highest_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            
+            # RATCHET: Only update if new stop is HIGHER than current
+            if RATCHET_TRAILING_STOP:
+                if new_trailing > pos.trailing_stop:
+                    old_stop = pos.trailing_stop
+                    pos.trailing_stop = new_trailing
+                    print(f"[EXECUTOR] 📈 Ratchet: Trailing stop moved UP ${old_stop:.6f} → ${pos.trailing_stop:.6f}")
+            else:
+                # Legacy behavior: always update based on highest price
+                if new_trailing > pos.trailing_stop:
+                    pos.trailing_stop = new_trailing
+                    print(f"[EXECUTOR] 📈 Trailing stop moved to ${pos.trailing_stop:.6f}")
     
     def check_exit_conditions(self, current_price: float) -> Optional[str]:
         """
@@ -274,9 +306,9 @@ class Executor:
         if pos.trailing_activated and pos.trailing_stop and current_price <= pos.trailing_stop:
             return "TRAILING_STOP"
         
-        # Time-based exit
+        # Time-based exit (V2: configurable minimum profit threshold)
         if pos.timer.has_exceeded(TIME_EXIT_MINUTES):
-            if pnl_pct < 1.0:  # Less than 1% profit after 45 min
+            if pnl_pct < TIME_EXIT_MIN_PROFIT_PCT:
                 return "TIME_EXIT"
         
         # Hard max loss (fallback)

@@ -1,26 +1,35 @@
 """
-Sniper V1 - Main Entry Point
+Sniper V2 - Main Entry Point
 =============================
 Data-driven cryptocurrency trading bot for MEXC.
 
+V2 Features:
+- Async dispatcher architecture
+- RSI Hook, Zombie Filter, Chameleon Mode
+- Dead hours, Ratchet trailing stop
+
 Usage:
-    python main.py              # Run the bot
+    python main.py              # Run V2 dispatcher
+    python main.py --legacy     # Run V1 sync loop
     python main.py --test       # Test API connection
     python main.py --stats      # Show performance stats
 """
 
 import sys
-import time
+import asyncio
 import argparse
 from datetime import datetime
 
 from config.settings import (
     SCAN_INTERVAL_SECONDS, PAPER_TRADING,
-    MEXC_API_KEY, TELEGRAM_BOT_TOKEN
+    MEXC_API_KEY, TELEGRAM_BOT_TOKEN,
+    DEAD_HOURS_ENABLED, DEAD_HOURS_START_UTC, DEAD_HOURS_END_UTC
 )
-from modules.scanner import get_scanner, Scanner
-from modules.analyzer import get_analyzer, Analyzer
-from modules.executor import get_executor, Executor, State
+from modules.scanner import get_scanner
+from modules.analyzer import get_analyzer
+from modules.executor import get_executor
+from modules.dispatcher import get_dispatcher
+from modules.capital_manager import get_capital_manager
 from utils.logger import print_performance_summary, get_performance_stats
 from utils.notifier import send_message
 
@@ -28,7 +37,7 @@ from utils.notifier import send_message
 def test_connection() -> bool:
     """Test API connectivity and configuration."""
     print("\n" + "="*50)
-    print("🔌 TESTING CONNECTION")
+    print("🔌 TESTING CONNECTION (V2)")
     print("="*50)
     
     # Check API keys
@@ -54,9 +63,23 @@ def test_connection() -> bool:
     else:
         print("⚠️ Could not fetch BTC data (non-critical)")
     
+    # V2: Test market regime detection
+    regime, btc_price, btc_sma = scanner.get_market_regime()
+    if regime != "UNKNOWN":
+        print(f"✅ Chameleon Mode: {regime} market (BTC: ${btc_price:,.0f} vs SMA50: ${btc_sma:,.0f})")
+    
+    # V2: Check dead hours status
+    capital_manager = get_capital_manager()
+    if DEAD_HOURS_ENABLED:
+        is_dead, minutes_until = capital_manager.get_dead_hours_status()
+        if is_dead:
+            print(f"⚠️ Dead hours active - trading paused for {minutes_until} minutes")
+        else:
+            print(f"✅ Dead hours: OFF (active {DEAD_HOURS_START_UTC}:00 - {DEAD_HOURS_END_UTC}:00 UTC)")
+    
     # Test Telegram
     if TELEGRAM_BOT_TOKEN and TELEGRAM_BOT_TOKEN != "your_bot_token_here":
-        if send_message("🔌 Sniper V1 connection test successful!"):
+        if send_message("🔌 Sniper V2 connection test successful!"):
             print("✅ Telegram notifications working")
         else:
             print("⚠️ Telegram configured but could not send message")
@@ -67,64 +90,33 @@ def test_connection() -> bool:
     return True
 
 
-def run_single_scan(scanner: Scanner, analyzer: Analyzer, executor: Executor) -> None:
-    """Run a single scan cycle."""
-    print(f"\n[{datetime.now().strftime('%H:%M:%S')}] Starting scan cycle...")
+def run_v2_dispatcher():
+    """Run the V2 async dispatcher."""
+    dispatcher = get_dispatcher()
     
-    # Check if we can trade
-    if not executor.can_trade():
-        # Monitor existing position if any
-        if executor.current_position:
-            executor.monitor_position()
-        return
-    
-    # Generate watchlist
-    watchlist = scanner.generate_watchlist()
-    
-    if not watchlist:
-        print("[MAIN] No candidates found this cycle")
-        return
-    
-    print(f"[MAIN] Analyzing {len(watchlist)} candidates...")
-    
-    # Analyze each candidate
-    for candidate in watchlist:
-        symbol = candidate['symbol']
-        
-        # Run 5-layer analysis
-        result = analyzer.analyze(symbol)
-        
-        if result.is_buy_signal:
-            # Found a trade!
-            print(f"\n🎯 BUY SIGNAL: {symbol}")
-            print(result)
-            
-            # Enter position
-            if executor.enter_position(result):
-                print(f"[MAIN] Position opened for {symbol}")
-                break  # Only one position at a time
-        else:
-            # Print rejection summary (compact)
-            print(f"[{symbol}] ❌ {result.rejection_reason}")
-    
-    print(f"[{datetime.now().strftime('%H:%M:%S')}] Scan cycle complete")
+    try:
+        asyncio.run(dispatcher.run())
+    except KeyboardInterrupt:
+        print("\n⚠️ Interrupted by user")
+        dispatcher.stop()
 
 
-def main_loop() -> None:
-    """Main trading loop."""
+def run_v1_legacy_loop():
+    """Run the V1 synchronous loop (legacy mode)."""
+    import time
+    
     print("\n" + "="*50)
-    print("🚀 SNIPER V1 - STARTING MAIN LOOP")
+    print("🚀 SNIPER V2 - LEGACY MODE (V1 LOOP)")
     print("="*50)
     print(f"Mode: {'PAPER TRADING' if PAPER_TRADING else '⚠️ LIVE TRADING'}")
     print(f"Scan Interval: {SCAN_INTERVAL_SECONDS // 60} minutes")
     print("="*50 + "\n")
     
-    # Initialize modules
     scanner = get_scanner()
     analyzer = get_analyzer()
     executor = get_executor()
+    capital_manager = get_capital_manager()
     
-    # Run startup sequence
     executor.startup()
     
     try:
@@ -135,44 +127,68 @@ def main_loop() -> None:
             print(f"📊 CYCLE #{cycle}")
             print(f"{'─'*50}")
             
-            # Run scan
-            run_single_scan(scanner, analyzer, executor)
+            # V2: Check dead hours
+            if capital_manager.is_dead_hours():
+                is_dead, minutes_until = capital_manager.get_dead_hours_status()
+                print(f"🌙 Dead hours active. Sleeping for {minutes_until} minutes...")
+                time.sleep(60)  # Check again in 1 minute
+                continue
             
-            # Monitor position if active
-            if executor.current_position:
-                time.sleep(30)  # Quick checks while in position
-                executor.monitor_position()
+            # Check if we can trade
+            if not executor.can_trade():
+                if executor.current_position:
+                    executor.monitor_position()
+                time.sleep(30)
+                continue
             
-            # Wait for next cycle
-            print(f"\n⏳ Waiting {SCAN_INTERVAL_SECONDS // 60} minutes until next scan...")
+            # Generate watchlist
+            watchlist = scanner.generate_watchlist()
             
-            # Sleep in chunks to allow keyboard interrupt
+            if not watchlist:
+                print("[MAIN] No candidates found this cycle")
+            else:
+                print(f"[MAIN] Analyzing {len(watchlist)} candidates...")
+                
+                for candidate in watchlist:
+                    symbol = candidate['symbol']
+                    result = analyzer.analyze(symbol, ticker_data=candidate)
+                    
+                    if result.is_buy_signal:
+                        print(f"\n🎯 BUY SIGNAL: {symbol}")
+                        print(result)
+                        
+                        if executor.enter_position(result):
+                            print(f"[MAIN] Position opened for {symbol}")
+                            break
+                    else:
+                        print(f"[{symbol}] ❌ {result.rejection_reason}")
+            
+            print(f"\n⏳ Waiting {SCAN_INTERVAL_SECONDS // 60} minutes...")
+            
             for _ in range(SCAN_INTERVAL_SECONDS // 10):
                 time.sleep(10)
-                
-                # If in position, monitor more frequently
                 if executor.current_position:
                     executor.monitor_position()
     
     except KeyboardInterrupt:
         print("\n\n⚠️ Interrupted by user")
         
-        # Close any open position
         if executor.current_position:
             print("Closing open position...")
             executor.exit_position("MANUAL")
         
-        # Print final stats
         print_performance_summary()
         print("Goodbye! 👋")
 
 
 def main():
     """Entry point."""
-    parser = argparse.ArgumentParser(description="Sniper V1 Trading Bot")
+    parser = argparse.ArgumentParser(description="Sniper V2 Trading Bot")
     parser.add_argument('--test', action='store_true', help='Test API connection')
     parser.add_argument('--stats', action='store_true', help='Show performance stats')
     parser.add_argument('--scan', action='store_true', help='Run a single scan (no trading)')
+    parser.add_argument('--legacy', action='store_true', help='Run V1 sync loop instead of V2 dispatcher')
+    parser.add_argument('--regime', action='store_true', help='Show current market regime')
     args = parser.parse_args()
     
     if args.test:
@@ -187,7 +203,6 @@ def main():
         sys.exit(0)
     
     elif args.scan:
-        # Single scan without trading
         if not test_connection():
             sys.exit(1)
         scanner = get_scanner()
@@ -198,13 +213,32 @@ def main():
             print(f"{i:2}. {c['symbol']:12} | ${c['price']:.6f} | {c['change_24h']:+.2f}% | Vol: ${c['volume_24h']:,.0f}")
         sys.exit(0)
     
-    else:
-        # Run main loop
+    elif args.regime:
+        scanner = get_scanner()
+        regime, btc_price, btc_sma = scanner.get_market_regime()
+        print(f"\n🦎 Market Regime: {regime}")
+        if btc_price and btc_sma:
+            print(f"   BTC Price: ${btc_price:,.2f}")
+            print(f"   BTC SMA50: ${btc_sma:,.2f}")
+            diff_pct = ((btc_price - btc_sma) / btc_sma) * 100
+            print(f"   Difference: {diff_pct:+.2f}%")
+        sys.exit(0)
+    
+    elif args.legacy:
+        # V1 legacy mode
         if not test_connection():
             print("\n❌ Connection test failed. Fix issues above and retry.")
             sys.exit(1)
-        main_loop()
+        run_v1_legacy_loop()
+    
+    else:
+        # V2 async dispatcher (default)
+        if not test_connection():
+            print("\n❌ Connection test failed. Fix issues above and retry.")
+            sys.exit(1)
+        run_v2_dispatcher()
 
 
 if __name__ == "__main__":
     main()
+
