@@ -83,13 +83,13 @@ BTC_SMA_PERIOD = 50  # BTC SMA for market regime detection
 # V2: Chameleon Mode - dynamic thresholds based on market regime
 CHAMELEON_MODE_ENABLED = True
 RSI_BULL_THRESHOLD = 40  # Looser RSI in bull market (BTC > SMA50)
-RSI_BEAR_THRESHOLD = 25  # Stricter RSI in bear market (BTC < SMA50)
+RSI_BEAR_THRESHOLD = 35  # Stricter RSI in bear market (BTC < SMA50)
 
 # =============================================================================
 # Layer 2: Order Book Analysis
 # =============================================================================
 ORDERBOOK_DEPTH = 20  # Number of levels to analyze
-ORDERBOOK_BID_ASK_RATIO = 1.5  # Minimum bid/ask volume ratio
+ORDERBOOK_BID_ASK_RATIO = 1.0  # Minimum bid/ask volume ratio
 
 # =============================================================================
 # Layer 3: Technical Indicators + V2 RSI Hook

@@ -224,17 +224,25 @@ class Analyzer:
         technicals['rsi_prev'] = rsi_prev
         
         # Check conditions
-        below_bb = close <= bb_lower
+        # V3: Relaxed BB condition (allow 0.5% tolerance above lower band)
+        bb_tolerance_multiplier = 1.005
+        below_bb = close <= (bb_lower * bb_tolerance_multiplier)
         
         # V2: Accept if RSI Hook triggered OR traditional oversold
         if RSI_HOOK_ENABLED:
-            # RSI Hook mode: either crossing back up from oversold OR currently oversold with hook
-            rsi_condition = rsi_hook_triggered or (rsi < rsi_threshold and rsi_hook_triggered is False)
+            # RSI Hook mode:
+            # 1. Hook triggered (strong reversal) -> Ignore BB condition
+            # 2. Just oversold (knife catching) -> Must be below BB (with tolerance)
+            if rsi_hook_triggered:
+                passed = True
+                rsi_condition = True
+            else:
+                rsi_condition = rsi < rsi_threshold
+                passed = rsi_condition and below_bb
         else:
-            # Traditional mode: just check if oversold
+            # Traditional mode
             rsi_condition = rsi < rsi_threshold
-        
-        passed = rsi_condition and below_bb
+            passed = rsi_condition and below_bb
         
         if passed:
             hook_str = " (RSI Hook ✓)" if rsi_hook_triggered else ""
@@ -243,11 +251,12 @@ class Analyzer:
             reasons = []
             if not rsi_condition:
                 if RSI_HOOK_ENABLED:
-                    reasons.append(f"RSI {rsi:.1f} not hooking (prev: {rsi_prev:.1f if rsi_prev else 'N/A'})")
+                    rsi_prev_str = f"{rsi_prev:.1f}" if rsi_prev is not None else 'N/A'
+                    reasons.append(f"RSI {rsi:.1f} not hooking (prev: {rsi_prev_str})")
                 else:
                     reasons.append(f"RSI {rsi:.1f} >= {rsi_threshold}")
-            if not below_bb:
-                reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f}")
+            if not below_bb and not rsi_hook_triggered:
+                reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f} (incl. tolerance)")
             print(f"[ANALYZER] Layer 3 ✗: {', '.join(reasons)}")
         
         return passed, technicals, rsi_hook_triggered, rsi_threshold
