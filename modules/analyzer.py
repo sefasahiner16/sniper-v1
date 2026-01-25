@@ -510,6 +510,12 @@ class Analyzer:
         # Layer 5: ATR Targets
         if result.price and result.atr:
             take_profit, stop_loss = self.calculate_layer5_targets(result.price, result.atr)
+            
+            # V3: Check if targets are valid (non-zero)
+            if take_profit == 0 or stop_loss == 0:
+                result.rejection_reason = "Layer 5: Profit potential too low (Noise Filter)"
+                return result
+                
             result.take_profit = take_profit
             result.stop_loss = stop_loss
             result.layer5_targets_set = True
