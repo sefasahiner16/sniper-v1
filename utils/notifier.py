@@ -72,7 +72,7 @@ def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float) 
 
 
 def notify_sell(symbol: str, entry_price: float, exit_price: float, 
-                pnl_pct: float, pnl_usd: float, reason: str) -> bool:
+                pnl_pct: float, pnl_usd: float, reason: str, balance: float) -> bool:
     """
     Send notification when exiting a position.
     
@@ -83,6 +83,7 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
         pnl_pct: Profit/Loss percentage
         pnl_usd: Profit/Loss in USD
         reason: Exit reason (TP_HIT, SL_HIT, TRAILING_STOP, TIME_EXIT)
+        balance: Current balance after trade
     """
     version = get_version_label()
     emoji = "🟢" if pnl_pct >= 0 else "🔴"
@@ -105,6 +106,7 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
 📤 *Exit:* ${exit_price:.6f}
 
 💵 *P&L:* {pnl_pct:+.2f}% (${pnl_usd:+.4f})
+💰 *Balance:* ${balance:.2f}
 📝 *Reason:* {reason_text}
 
 ⏰ _Paper Trading Mode_

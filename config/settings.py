@@ -58,6 +58,7 @@ OPERATIONAL_CAP = 100.0  # Target operational USDT balance
 DEAD_HOURS_ENABLED = True  # Enable trading pause during low volume hours
 DEAD_HOURS_START_UTC = 3  # Trading pause start (03:00 UTC = 06:00 Turkey)
 DEAD_HOURS_END_UTC = 8  # Trading pause end (08:00 UTC = 11:00 Turkey)
+DEAD_HOURS_PRE_BUFFER_MINUTES = 60  # Stop buying this many minutes before dead hours
 
 # =============================================================================
 # Scanner Settings
@@ -114,7 +115,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # =============================================================================
 ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 2.0  # TP = Entry + (ATR * this)
-STOP_LOSS_ATR_MULTIPLIER = 1.0    # SL = Entry - (ATR * this)
+STOP_LOSS_ATR_MULTIPLIER = 1.5    # SL = Entry - (ATR * this)
 
 # =============================================================================
 # Position Management + V2 Ratchet Trailing Stop

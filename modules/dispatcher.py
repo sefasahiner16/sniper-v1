@@ -102,7 +102,7 @@ class SniperSlot:
         if self.position is not None:
             return False
         
-        if self.capital_manager.is_dead_hours():
+        if self.capital_manager.is_dead_hours(include_buffer=True):
             return False
         
         # Check if we have capital available
@@ -150,14 +150,20 @@ class SniperSlot:
         print(f"{self.get_slot_name()} 🎯 ENTERED: {symbol} @ ${price:.6f} (Size: ${slot_size:.2f})")
         
         # Log and notify
-        log_trade_entry(
-            symbol=symbol,
-            trade_id=trade_id,
-            entry_price=price,
-            quantity=quantity,
-            take_profit=analysis.take_profit,
-            stop_loss=analysis.stop_loss
-        )
+        # Log and notify
+        try:
+            log_trade_entry(
+                symbol=symbol,
+                trade_id=trade_id,
+                entry_price=price,
+                quantity=quantity,
+                take_profit=analysis.take_profit,
+                stop_loss=analysis.stop_loss,
+                balance_before=available # Passed available as approximate balance before
+            )
+        except Exception as e:
+            print(f"{self.get_slot_name()} ⚠️ Logging failed: {e}")
+            
         notify_buy(symbol, price, analysis.take_profit, analysis.stop_loss)
         
         return True
@@ -190,7 +196,7 @@ class SniperSlot:
             exit_reason=reason,
             balance_after=self.shared_state['balance']
         )
-        notify_sell(pos.symbol, pos.entry_price, exit_price, pnl_pct, pnl_usd, reason)
+        notify_sell(pos.symbol, pos.entry_price, exit_price, pnl_pct, pnl_usd, reason, self.shared_state['balance'])
         
         # Clear position
         self.position = None
@@ -327,7 +333,7 @@ class Watchtower:
     
     async def scan_once(self) -> List[Opportunity]:
         """Perform a single scan cycle."""
-        if self.capital_manager.is_dead_hours():
+        if self.capital_manager.is_dead_hours(include_buffer=True):
             is_dead, minutes_until = self.capital_manager.get_dead_hours_status()
             print(f"[WATCHTOWER] 🌙 Dead hours. Resuming in {minutes_until} minutes...")
             return []

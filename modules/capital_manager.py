@@ -143,27 +143,49 @@ class CapitalManager:
     # Dead Hours (Shift System)
     # =========================================================================
     
-    def is_dead_hours(self) -> bool:
+    def is_dead_hours(self, include_buffer: bool = False) -> bool:
         """
-        Check if current time is within dead hours.
-        
-        Dead hours are when trading volume is low and fake moves occur.
-        
-        Returns:
-            True if trading should be paused
+        Check if current time is within dead hours (or pre-buffer).
         """
         if not DEAD_HOURS_ENABLED:
             return False
+            
+        from config.settings import DEAD_HOURS_PRE_BUFFER_MINUTES
         
-        current_hour = datetime.now(timezone.utc).hour
+        current = datetime.now(timezone.utc)
+        current_hour = current.hour
+        current_minute = current.minute
         
-        # Handle wrap-around (e.g., 22:00 - 06:00)
+        # Calculate effective start time (start - buffer)
+        buffer_hours = DEAD_HOURS_PRE_BUFFER_MINUTES // 60
+        buffer_minutes = DEAD_HOURS_PRE_BUFFER_MINUTES % 60
+        
+        # Check standard dead hours first
+        in_dead_hours = False
         if DEAD_HOURS_START_UTC <= DEAD_HOURS_END_UTC:
-            # Simple range: e.g., 03:00 - 08:00
-            return DEAD_HOURS_START_UTC <= current_hour < DEAD_HOURS_END_UTC
+            in_dead_hours = DEAD_HOURS_START_UTC <= current_hour < DEAD_HOURS_END_UTC
         else:
-            # Wrap-around range: e.g., 22:00 - 06:00
-            return current_hour >= DEAD_HOURS_START_UTC or current_hour < DEAD_HOURS_END_UTC
+            in_dead_hours = current_hour >= DEAD_HOURS_START_UTC or current_hour < DEAD_HOURS_END_UTC
+            
+        if in_dead_hours:
+            return True
+            
+        if not include_buffer:
+            return False
+            
+        # Check buffer period
+        # Simple check: are we within X minutes of start?
+        # Calculate minutes from current time to start time
+        if DEAD_HOURS_START_UTC > current_hour:
+            minutes_until = (DEAD_HOURS_START_UTC - current_hour) * 60 - current_minute
+        else:
+            minutes_until = ((24 - current_hour) + DEAD_HOURS_START_UTC) * 60 - current_minute
+            
+        if 0 < minutes_until <= DEAD_HOURS_PRE_BUFFER_MINUTES:
+            # We are in the buffer zone
+            return True
+            
+        return False
     
     def get_dead_hours_status(self) -> Tuple[bool, Optional[int]]:
         """
@@ -172,7 +194,7 @@ class CapitalManager:
         Returns:
             Tuple of (is_dead_hours, minutes_until_trading_resumes)
         """
-        is_dead = self.is_dead_hours()
+        is_dead = self.is_dead_hours(include_buffer=True)
         
         if not is_dead:
             return False, None

@@ -362,18 +362,21 @@ class Executor:
         
         if self.is_paper_mode:
             # Log the exit
-            log_trade_exit(
-                trade_id=pos.trade_id,
-                exit_price=current_price,
-                exit_reason=reason,
-                balance_after=new_balance
-            )
+            try:
+                log_trade_exit(
+                    trade_id=pos.trade_id,
+                    exit_price=current_price,
+                    exit_reason=reason,
+                    balance_after=new_balance
+                )
+            except Exception as e:
+                print(f"[EXECUTOR] ⚠️ Logging failed: {e}")
             
             # Update paper balance
             self.paper_balance = new_balance
             
             # Send Telegram notification
-            notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason)
+            notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance)
         
         # Clear position
         self.current_position = None
