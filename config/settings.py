@@ -115,7 +115,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # =============================================================================
 ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 1.5  # OPTIMIZED: Lower target for higher win rate (was 2.0)
-STOP_LOSS_ATR_MULTIPLIER = 1.5    # SL = Entry - (ATR * this)
+STOP_LOSS_ATR_MULTIPLIER = 1.0    # SL = Entry - (ATR * this) (Asymmetric Risk/Reward)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %

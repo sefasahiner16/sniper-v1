@@ -411,7 +411,9 @@ class Executor:
             self.paper_balance = new_balance
             
             # Send Telegram notification
-            notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance)
+            # Calculate stats for notification
+            stats = get_performance_stats()
+            notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance, stats)
         
         else:
             # LIVE TRADING EXIT
@@ -426,7 +428,10 @@ class Executor:
                 
                 # Log and notify
                 log_trade_exit(pos.trade_id, current_price, reason, new_balance)
-                notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance)
+                
+                # Get stats for notification
+                stats = get_performance_stats()
+                notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance, stats)
                 
             except Exception as e:
                 print(f"[EXECUTOR] ❌ Live exit failed: {e}")

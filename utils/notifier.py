@@ -72,7 +72,8 @@ def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float) 
 
 
 def notify_sell(symbol: str, entry_price: float, exit_price: float, 
-                pnl_pct: float, pnl_usd: float, reason: str, balance: float) -> bool:
+                pnl_pct: float, pnl_usd: float, reason: str, balance: float, 
+                stats: dict = None) -> bool:
     """
     Send notification when exiting a position.
     
@@ -84,6 +85,7 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
         pnl_usd: Profit/Loss in USD
         reason: Exit reason (TP_HIT, SL_HIT, TRAILING_STOP, TIME_EXIT)
         balance: Current balance after trade
+        stats: Optional performance statistics dictionary
     """
     version = get_version_label()
     emoji = "🟢" if pnl_pct >= 0 else "🔴"
@@ -98,6 +100,14 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
         "SHUTDOWN": "🛑 Bot Shutdown"
     }.get(reason, reason)
     
+    stats_text = ""
+    if stats:
+        stats_text = f"""
+📈 *Performance:*
+🏆 *Win Rate:* {stats.get('win_rate', 0)}% ({stats.get('wins', 0)}/{stats.get('total_trades', 0)})
+📉 *Total Trades:* {stats.get('total_trades', 0)}
+"""
+    
     message = f"""
 {emoji} *[{version}] POSITION CLOSED - {win_loss}*
 
@@ -108,7 +118,7 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
 💵 *P&L:* {pnl_pct:+.2f}% (${pnl_usd:+.4f})
 💰 *Balance:* ${balance:.2f}
 📝 *Reason:* {reason_text}
-
+{stats_text}
 ⏰ _Paper Trading Mode_
 """
     return send_message(message.strip())
