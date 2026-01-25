@@ -120,21 +120,21 @@ class Scanner:
                 continue
         return filtered
     
-    def sort_by_volume(self, tickers: Dict, descending: bool = True) -> List[str]:
+    def sort_by_change(self, tickers: Dict, ascending: bool = True) -> List[str]:
         """
-        Sort symbols by volume.
+        Sort symbols by price change percentage.
         
         Args:
             tickers: Ticker dictionary
-            descending: Sort high to low if True
+            ascending: Sort low to high (Deepest dips first)
             
         Returns:
-            List of symbols sorted by volume
+            List of symbols sorted by change
         """
         sorted_items = sorted(
             tickers.items(),
-            key=lambda x: x[1].get('quoteVolume', 0) or 0,
-            reverse=descending
+            key=lambda x: x[1].get('percentage', 0) or 0,
+            reverse=not ascending
         )
         return [item[0] for item in sorted_items]
     
@@ -170,7 +170,8 @@ class Scanner:
         print(f"[SCANNER] {len(price_filtered)} in target volatility range ({MIN_PRICE_CHANGE_PCT}% to {MAX_PRICE_CHANGE_PCT}%)")
         
         # Sort and limit
-        sorted_symbols = self.sort_by_volume(price_filtered)[:limit]
+        # OPTIMIZED: Prioritize Volatility (Deepest Dips) over Volume
+        sorted_symbols = self.sort_by_change(price_filtered, ascending=True)[:limit]
         
         # Build watchlist with full data
         watchlist = []
