@@ -57,17 +57,17 @@ OPERATIONAL_CAP = 100.0  # Target operational USDT balance
 # =============================================================================
 DEAD_HOURS_ENABLED = True  # Enable trading pause during low volume hours
 DEAD_HOURS_START_UTC = 3  # Trading pause start (03:00 UTC = 06:00 Turkey)
-DEAD_HOURS_END_UTC = 8  # Trading pause end (08:00 UTC = 11:00 Turkey)
+DEAD_HOURS_END_UTC = 6  # Trading pause end (06:00 UTC = 09:00 Turkey) - OPTIMIZED: Shortened duration
 DEAD_HOURS_PRE_BUFFER_MINUTES = 60  # Stop buying this many minutes before dead hours
 
 # =============================================================================
 # Scanner Settings
 # =============================================================================
-SCAN_INTERVAL_SECONDS = 300  # 5 minutes between scans
+SCAN_INTERVAL_SECONDS = 60  # OPTIMIZED: 1 minute between scans (High Velocity)
 MIN_24H_VOLUME_USDT = 100000  # Minimum 24h volume in USDT
 MIN_PRICE_CHANGE_PCT = -15.0  # Minimum negative change (looking for dips)
-MAX_PRICE_CHANGE_PCT = -3.0   # Maximum negative change (not too crashed)
-WATCHLIST_SIZE = 20  # Number of candidates to analyze
+MAX_PRICE_CHANGE_PCT = -2.0   # OPTIMIZED: Catch smaller dips (was -3.0)
+WATCHLIST_SIZE = 50  # OPTIMIZED: Widen the net (was 20)
 
 # =============================================================================
 # V2: Zombie Filter (Liquidity Check)
@@ -114,7 +114,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # Layer 5: ATR-Based Targets
 # =============================================================================
 ATR_PERIOD = 14
-TAKE_PROFIT_ATR_MULTIPLIER = 2.0  # TP = Entry + (ATR * this)
+TAKE_PROFIT_ATR_MULTIPLIER = 1.5  # OPTIMIZED: Lower target for higher win rate (was 2.0)
 STOP_LOSS_ATR_MULTIPLIER = 1.5    # SL = Entry - (ATR * this)
 
 # =============================================================================
@@ -162,4 +162,3 @@ CAPITULATION_BONUS_SCORE = 0.5  # Extra score for capitulation + RSI Hook
 # =============================================================================
 LOG_FILE = "data/trades.json"
 LOG_LEVEL = "INFO"
-
