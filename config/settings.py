@@ -117,6 +117,10 @@ ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 1.5  # OPTIMIZED: Lower target for higher win rate (was 2.0)
 STOP_LOSS_ATR_MULTIPLIER = 1.5    # SL = Entry - (ATR * this)
 
+# V3: Minimum Volatility Requirement (Noise Filter)
+# Reject trades if the calculated Take Profit is less than this %
+MIN_TARGET_PROFIT_PCT = 1.5
+
 # =============================================================================
 # Position Management + V2 Ratchet Trailing Stop
 # =============================================================================

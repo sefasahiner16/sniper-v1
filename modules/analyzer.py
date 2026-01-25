@@ -24,6 +24,7 @@ from config.settings import (
     VOLUME_SPIKE_MULTIPLIER,
     TAKE_PROFIT_ATR_MULTIPLIER, STOP_LOSS_ATR_MULTIPLIER,
     ANALYSIS_TIMEFRAME, OHLCV_LIMIT,
+    MIN_TARGET_PROFIT_PCT,
     MULTI_TIMEFRAME_ENABLED, CONFIRM_TIMEFRAME, MULTI_TF_RSI_THRESHOLD,
     CAPITULATION_ENABLED, CAPITULATION_VOLUME_MULT
 )
@@ -307,6 +308,11 @@ class Analyzer:
         
         tp_pct = ((take_profit - entry_price) / entry_price) * 100
         sl_pct = ((stop_loss - entry_price) / entry_price) * 100
+        
+        # V3: Minimum Profit Filter (Noise Reduction)
+        if tp_pct < MIN_TARGET_PROFIT_PCT:
+            print(f"[ANALYZER] Layer 5 ✗: Profit Potential {tp_pct:.2f}% < {MIN_TARGET_PROFIT_PCT}% (Too Risky/Noise)")
+            return 0.0, 0.0
         
         print(f"[ANALYZER] Layer 5 ✓: TP ${take_profit:.6f} (+{tp_pct:.2f}%), SL ${stop_loss:.6f} ({sl_pct:.2f}%)")
         
