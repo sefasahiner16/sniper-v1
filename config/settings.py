@@ -72,7 +72,7 @@ WATCHLIST_SIZE = 50  # OPTIMIZED: Widen the net (was 20)
 # =============================================================================
 # V2: Zombie Filter (Liquidity Check)
 # =============================================================================
-ZOMBIE_FILTER_ENABLED = True
+ZOMBIE_FILTER_ENABLED = False  # DISABLED due to logic bug (revisit later)
 ZOMBIE_VOLUME_RATIO = 0.1  # Min 24h volume / market cap ratio
 
 # =============================================================================
@@ -102,6 +102,7 @@ BOLLINGER_STD = 2
 
 # V2: RSI Hook - buy on RSI crossing BACK above threshold, not while falling
 RSI_HOOK_ENABLED = True
+RSI_HOOK_STRICT = True  # NEW: Require hook to buy (rejects falling knives)
 RSI_HOOK_THRESHOLD = 30  # RSI must cross back above this
 
 # =============================================================================
@@ -114,8 +115,8 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # Layer 5: ATR-Based Targets
 # =============================================================================
 ATR_PERIOD = 14
-TAKE_PROFIT_ATR_MULTIPLIER = 1.5  # OPTIMIZED: Lower target for higher win rate (was 2.0)
-STOP_LOSS_ATR_MULTIPLIER = 1.0    # SL = Entry - (ATR * this) (Asymmetric Risk/Reward)
+TAKE_PROFIT_ATR_MULTIPLIER = 1.6  # OPTIMIZED: Higher target (Ratio 2:1)
+STOP_LOSS_ATR_MULTIPLIER = 0.8    # SL = Entry - (ATR * this) (Tighter Stop)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %

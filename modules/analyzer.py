@@ -18,7 +18,7 @@ import pandas as pd
 from config.settings import (
     BTC_SENTIMENT_THRESHOLD,
     ORDERBOOK_DEPTH, ORDERBOOK_BID_ASK_RATIO,
-    RSI_OVERSOLD, RSI_HOOK_ENABLED, RSI_HOOK_THRESHOLD,
+    RSI_OVERSOLD, RSI_HOOK_ENABLED, RSI_HOOK_THRESHOLD, RSI_HOOK_STRICT,
     RSI_BULL_THRESHOLD, RSI_BEAR_THRESHOLD, CHAMELEON_MODE_ENABLED,
     ZOMBIE_FILTER_ENABLED,
     VOLUME_SPIKE_MULTIPLIER,
@@ -229,35 +229,47 @@ class Analyzer:
         bb_tolerance_multiplier = 1.005
         below_bb = close <= (bb_lower * bb_tolerance_multiplier)
         
-        # V2: Accept if RSI Hook triggered OR traditional oversold
-        if RSI_HOOK_ENABLED:
-            # RSI Hook mode:
-            # 1. Hook triggered (strong reversal) -> Ignore BB condition
-            # 2. Just oversold (knife catching) -> Must be below BB (with tolerance)
+        # V3 STRICT MODE: Require Hook if enabled
+        if RSI_HOOK_STRICT:
             if rsi_hook_triggered:
                 passed = True
-                rsi_condition = True
+                print(f"[ANALYZER] Layer 3 ✓: RSI Hook triggered (STRICT MODE)")
             else:
+                passed = False
+                print(f"[ANALYZER] Layer 3 ✗: Hook NOT triggered (STRICT MODE active)")
+        else:
+            # V2 Loose Mode: Accept if RSI Hook triggered OR traditional oversold
+            if RSI_HOOK_ENABLED:
+                # RSI Hook mode:
+                # 1. Hook triggered (strong reversal) -> Ignore BB condition
+                # 2. Just oversold (knife catching) -> Must be below BB (with tolerance)
+                if rsi_hook_triggered:
+                    passed = True
+                    rsi_condition = True
+                else:
+                    rsi_condition = rsi < rsi_threshold
+                    passed = rsi_condition and below_bb
+            else:
+                # Traditional mode
                 rsi_condition = rsi < rsi_threshold
                 passed = rsi_condition and below_bb
-        else:
-            # Traditional mode
-            rsi_condition = rsi < rsi_threshold
-            passed = rsi_condition and below_bb
         
         if passed:
             hook_str = " (RSI Hook ✓)" if rsi_hook_triggered else ""
             print(f"[ANALYZER] Layer 3 ✓: RSI {rsi:.1f}{hook_str}, Threshold: {rsi_threshold}, BB Lower: {bb_lower:.6f}")
         else:
             reasons = []
-            if not rsi_condition:
-                if RSI_HOOK_ENABLED:
-                    rsi_prev_str = f"{rsi_prev:.1f}" if rsi_prev is not None else 'N/A'
-                    reasons.append(f"RSI {rsi:.1f} not hooking (prev: {rsi_prev_str})")
-                else:
-                    reasons.append(f"RSI {rsi:.1f} >= {rsi_threshold}")
-            if not below_bb and not rsi_hook_triggered:
-                reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f} (incl. tolerance)")
+            if RSI_HOOK_STRICT:
+                reasons.append("STRICT MODE: RSI Hook required but not triggered")
+            else:
+                if not rsi_condition:
+                    if RSI_HOOK_ENABLED:
+                        rsi_prev_str = f"{rsi_prev:.1f}" if rsi_prev is not None else 'N/A'
+                        reasons.append(f"RSI {rsi:.1f} not hooking (prev: {rsi_prev_str})")
+                    else:
+                        reasons.append(f"RSI {rsi:.1f} >= {rsi_threshold}")
+                if not below_bb and not rsi_hook_triggered:
+                    reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f} (incl. tolerance)")
             print(f"[ANALYZER] Layer 3 ✗: {', '.join(reasons)}")
         
         return passed, technicals, rsi_hook_triggered, rsi_threshold
