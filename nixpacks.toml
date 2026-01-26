@@ -1,9 +1,0 @@
-[project]
-name = "sniper-v1"
-
-[build]
-builder = "python"
-python_version = "3.10"
-
-[deploy]
-start_command = "python main.py"
