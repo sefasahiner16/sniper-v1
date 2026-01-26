@@ -115,8 +115,8 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # Layer 5: ATR-Based Targets
 # =============================================================================
 ATR_PERIOD = 14
-TAKE_PROFIT_ATR_MULTIPLIER = 1.6  # OPTIMIZED: Higher target (Ratio 2:1)
-STOP_LOSS_ATR_MULTIPLIER = 0.8    # SL = Entry - (ATR * this) (Tighter Stop)
+TAKE_PROFIT_ATR_MULTIPLIER = 1.8  # OPTIMIZED: Aggressive Target (Ratio 3:1)
+STOP_LOSS_ATR_MULTIPLIER = 0.6    # SL = Entry - (ATR * this) (Sniper Stop)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
