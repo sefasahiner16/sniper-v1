@@ -1,5 +1,5 @@
 """
-Sniper V3 - The Analyzer (Enhanced 5-Layer Filter)
+Sniper V4 - The Analyzer (Enhanced 5-Layer Filter)
 ===================================================
 The brain of the trading system. Implements the enhanced 5-layer safety algorithm.
 
@@ -9,6 +9,9 @@ V3 Features:
 - Chameleon Mode: Dynamic RSI thresholds based on market regime
 - Multi-Timeframe: Confirm on 5m AND 15m charts
 - Volume Capitulation: Detect 5x+ volume panic selling
+
+V4 Features:
+- Bull Mode: Trend-following strategy when BTC > SMA50
 """
 
 from dataclasses import dataclass, field
@@ -26,10 +29,13 @@ from config.settings import (
     ANALYSIS_TIMEFRAME, OHLCV_LIMIT,
     MIN_TARGET_PROFIT_PCT,
     MULTI_TIMEFRAME_ENABLED, CONFIRM_TIMEFRAME, MULTI_TF_RSI_THRESHOLD,
-    CAPITULATION_ENABLED, CAPITULATION_VOLUME_MULT
+    CAPITULATION_ENABLED, CAPITULATION_VOLUME_MULT,
+    # V4: Bull Mode settings
+    BULL_MODE_ENABLED, BULL_RSI_BREAKOUT, BULL_BREAKOUT_PERIOD,
+    BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR
 )
 from modules.scanner import get_scanner
-from modules.indicators import analyze_technicals, get_atr_targets, calculate_rsi
+from modules.indicators import analyze_technicals, get_atr_targets, calculate_rsi, calculate_highest_high
 
 
 @dataclass
@@ -73,6 +79,12 @@ class AnalysisResult:
     # V3: Volume capitulation
     capitulation_ok: bool = False
     capitulation_volume_ratio: Optional[float] = None
+    
+    # V4: Bull Mode (Trend-Following)
+    bull_mode_active: bool = False  # True if using trend-following
+    rsi_breakout_ok: bool = False   # RSI crossed above threshold
+    price_breakout_ok: bool = False # Price above N-period high
+    highest_high: Optional[float] = None
     
     # Targets (set by Layer 5)
     take_profit: Optional[float] = None
@@ -273,6 +285,86 @@ class Analyzer:
             print(f"[ANALYZER] Layer 3 ✗: {', '.join(reasons)}")
         
         return passed, technicals, rsi_hook_triggered, rsi_threshold
+    
+    def check_layer3_bull_technical(
+        self, 
+        df: pd.DataFrame
+    ) -> Tuple[bool, dict, bool, bool]:
+        """
+        V4 Bull Mode Layer 3: RSI momentum breakout + price breakout.
+        
+        Entry Conditions:
+        1. RSI crosses ABOVE BULL_RSI_BREAKOUT (from below) - momentum building
+        2. Price is above N-period highest high - breakout confirmation
+        
+        Args:
+            df: OHLCV DataFrame
+            
+        Returns:
+            Tuple of (passed, technicals_dict, rsi_breakout_ok, price_breakout_ok)
+        """
+        technicals = analyze_technicals(df)
+        
+        if "error" in technicals:
+            print(f"[ANALYZER] Bull Layer 3: {technicals['error']}")
+            return False, technicals, False, False
+        
+        rsi = technicals.get('rsi')
+        close = technicals.get('close')
+        
+        if rsi is None or close is None:
+            print("[ANALYZER] Bull Layer 3: Missing indicator data")
+            return False, technicals, False, False
+        
+        # Calculate RSI breakout (crossing above threshold)
+        rsi_series = calculate_rsi(df)
+        rsi_prev = None
+        rsi_breakout_ok = False
+        
+        if len(rsi_series) >= 2:
+            rsi_prev = float(rsi_series.iloc[-2]) if pd.notna(rsi_series.iloc[-2]) else None
+            
+            if rsi_prev is not None:
+                # RSI Breakout: was below threshold, now above
+                rsi_breakout_ok = (rsi_prev < BULL_RSI_BREAKOUT) and (rsi >= BULL_RSI_BREAKOUT)
+                
+                if rsi_breakout_ok:
+                    print(f"[ANALYZER] 🚀 Bull RSI Breakout: {rsi_prev:.1f} → {rsi:.1f} (crossed {BULL_RSI_BREAKOUT})")
+        
+        technicals['rsi_prev'] = rsi_prev
+        
+        # Calculate price breakout (above N-period high)
+        highest_high_series = calculate_highest_high(df, period=BULL_BREAKOUT_PERIOD)
+        
+        # Use the PREVIOUS bar's highest high (not current, to avoid look-ahead)
+        if len(highest_high_series) >= 2 and pd.notna(highest_high_series.iloc[-2]):
+            highest_high = float(highest_high_series.iloc[-2])
+            price_breakout_ok = close > highest_high
+            technicals['highest_high'] = highest_high
+            
+            if price_breakout_ok:
+                print(f"[ANALYZER] 🚀 Price Breakout: {close:.6f} > {highest_high:.6f} ({BULL_BREAKOUT_PERIOD}-period high)")
+        else:
+            highest_high = None
+            price_breakout_ok = False
+            technicals['highest_high'] = None
+        
+        # Both conditions must pass for Bull Mode
+        passed = rsi_breakout_ok and price_breakout_ok
+        
+        if passed:
+            print(f"[ANALYZER] Bull Layer 3 ✓: RSI Breakout + Price Breakout confirmed")
+        else:
+            reasons = []
+            if not rsi_breakout_ok:
+                rsi_prev_str = f"{rsi_prev:.1f}" if rsi_prev else "N/A"
+                reasons.append(f"RSI {rsi:.1f} not breaking out (prev: {rsi_prev_str}, threshold: {BULL_RSI_BREAKOUT})")
+            if not price_breakout_ok:
+                hh_str = f"{highest_high:.6f}" if highest_high else "N/A"
+                reasons.append(f"Price {close:.6f} not above {BULL_BREAKOUT_PERIOD}-period high ({hh_str})")
+            print(f"[ANALYZER] Bull Layer 3 ✗: {', '.join(reasons)}")
+        
+        return passed, technicals, rsi_breakout_ok, price_breakout_ok
     
     def check_layer4_volume(self, technicals: dict) -> tuple[bool, float]:
         """
@@ -480,76 +572,148 @@ class Analyzer:
         result.price = df['close'].iloc[-1]
         result.atr = technicals.get('atr')
         
-        # Layer 3: Technical Confluence (V2: with RSI Hook and Chameleon Mode)
-        layer3_ok, technicals_updated, rsi_hook_triggered, effective_threshold = self.check_layer3_technical(
-            df, 
-            market_regime=result.market_regime
-        )
-        result.layer3_technical_ok = layer3_ok
-        result.rsi = technicals_updated.get('rsi')
-        result.rsi_prev = technicals_updated.get('rsi_prev')
-        result.bb_lower = technicals_updated.get('bb_lower')
-        result.rsi_hook_ok = rsi_hook_triggered
-        result.effective_rsi_threshold = effective_threshold
+        # V4: Branch into Bull Mode or Bear Mode based on market regime
+        use_bull_mode = BULL_MODE_ENABLED and result.market_regime == "BULL"
         
-        if not layer3_ok:
-            result.rejection_reason = "Layer 3: Technical conditions not met"
-            return result
-        
-        # Layer 4: Volume Validation
-        layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
-        result.layer4_volume_ok = layer4_ok
-        result.volume_ratio = volume_ratio
-        
-        if not layer4_ok:
-            result.rejection_reason = "Layer 4: Volume too low"
-            return result
-        
-        # V3: Check volume capitulation
-        is_capitulation, cap_ratio = self.check_capitulation(technicals)
-        result.capitulation_ok = is_capitulation
-        result.capitulation_volume_ratio = cap_ratio
-        
-        # V3: Multi-timeframe confirmation
-        multi_tf_ok, confirm_rsi = self.check_multi_timeframe(symbol)
-        result.multi_tf_ok = multi_tf_ok
-        result.confirm_rsi = confirm_rsi
-        
-        if not multi_tf_ok:
-            result.rejection_reason = f"Multi-TF: 15m RSI too high ({confirm_rsi:.1f})"
-            return result
-        
-        # Layer 5: ATR Targets
-        if result.price and result.atr:
-            take_profit, stop_loss = self.calculate_layer5_targets(result.price, result.atr)
+        if use_bull_mode:
+            # =========================================================
+            # BULL MODE: Trend-Following Strategy
+            # =========================================================
+            result.bull_mode_active = True
+            print(f"[ANALYZER] 🐂 BULL MODE ACTIVE - Using trend-following strategy")
             
-            # V3: Check if targets are valid (non-zero)
-            if take_profit == 0 or stop_loss == 0:
-                result.rejection_reason = "Layer 5: Profit potential too low (Noise Filter)"
+            # Layer 3 (Bull): RSI Breakout + Price Breakout
+            layer3_ok, technicals_updated, rsi_breakout_ok, price_breakout_ok = self.check_layer3_bull_technical(df)
+            result.layer3_technical_ok = layer3_ok
+            result.rsi = technicals_updated.get('rsi')
+            result.rsi_prev = technicals_updated.get('rsi_prev')
+            result.rsi_breakout_ok = rsi_breakout_ok
+            result.price_breakout_ok = price_breakout_ok
+            result.highest_high = technicals_updated.get('highest_high')
+            result.effective_rsi_threshold = BULL_RSI_BREAKOUT
+            
+            if not layer3_ok:
+                result.rejection_reason = "Bull Layer 3: Breakout conditions not met"
                 return result
+            
+            # Layer 4: Volume Validation (same as Bear Mode)
+            layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
+            result.layer4_volume_ok = layer4_ok
+            result.volume_ratio = volume_ratio
+            
+            if not layer4_ok:
+                result.rejection_reason = "Layer 4: Volume too low"
+                return result
+            
+            # Skip Multi-TF check for Bull Mode (trend confirmation is done via price breakout)
+            result.multi_tf_ok = True
+            
+            # Layer 5 (Bull): ATR Targets with Bull Mode multipliers
+            if result.price and result.atr:
+                take_profit, stop_loss = get_atr_targets(
+                    result.price, result.atr,
+                    tp_multiplier=BULL_TAKE_PROFIT_ATR,
+                    sl_multiplier=BULL_STOP_LOSS_ATR
+                )
                 
-            result.take_profit = take_profit
-            result.stop_loss = stop_loss
-            result.layer5_targets_set = True
+                tp_pct = ((take_profit - result.price) / result.price) * 100
+                sl_pct = ((stop_loss - result.price) / result.price) * 100
+                
+                if tp_pct < MIN_TARGET_PROFIT_PCT:
+                    result.rejection_reason = f"Bull Layer 5: Profit potential {tp_pct:.2f}% too low"
+                    return result
+                
+                result.take_profit = take_profit
+                result.stop_loss = stop_loss
+                result.layer5_targets_set = True
+                print(f"[ANALYZER] Bull Layer 5 ✓: TP ${take_profit:.6f} (+{tp_pct:.2f}%), SL ${stop_loss:.6f} ({sl_pct:.2f}%)")
+            else:
+                result.rejection_reason = "Bull Layer 5: Could not calculate targets"
+                return result
+            
+            # All layers passed in Bull Mode!
+            result.is_buy_signal = True
+            
+            extras = ["BULL MODE", "RSI Breakout", "Price Breakout"]
+            extras_str = " + ".join(extras)
+            print(f"\n🚀 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL [BULL MODE] {extras_str} for {symbol}")
+            
         else:
-            result.rejection_reason = "Layer 5: Could not calculate targets"
-            return result
-        
-        # All layers passed!
-        result.is_buy_signal = True
-        
-        # Build status string
-        extras = []
-        if rsi_hook_triggered:
-            extras.append("RSI Hook")
-        if is_capitulation:
-            extras.append("CAPITULATION")
-        if multi_tf_ok and confirm_rsi:
-            extras.append("Multi-TF")
-        
-        extras_str = " + ".join(extras) if extras else ""
-        regime_str = f" [{result.market_regime}]" if result.market_regime != "UNKNOWN" else ""
-        print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{regime_str} {extras_str} for {symbol}")
+            # =========================================================
+            # BEAR MODE: Mean-Reversion Strategy (Original V3 Logic)
+            # =========================================================
+            print(f"[ANALYZER] 🐻 BEAR MODE - Using mean-reversion strategy")
+            
+            # Layer 3: Technical Confluence (V2: with RSI Hook and Chameleon Mode)
+            layer3_ok, technicals_updated, rsi_hook_triggered, effective_threshold = self.check_layer3_technical(
+                df, 
+                market_regime=result.market_regime
+            )
+            result.layer3_technical_ok = layer3_ok
+            result.rsi = technicals_updated.get('rsi')
+            result.rsi_prev = technicals_updated.get('rsi_prev')
+            result.bb_lower = technicals_updated.get('bb_lower')
+            result.rsi_hook_ok = rsi_hook_triggered
+            result.effective_rsi_threshold = effective_threshold
+            
+            if not layer3_ok:
+                result.rejection_reason = "Layer 3: Technical conditions not met"
+                return result
+            
+            # Layer 4: Volume Validation
+            layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
+            result.layer4_volume_ok = layer4_ok
+            result.volume_ratio = volume_ratio
+            
+            if not layer4_ok:
+                result.rejection_reason = "Layer 4: Volume too low"
+                return result
+            
+            # V3: Check volume capitulation
+            is_capitulation, cap_ratio = self.check_capitulation(technicals)
+            result.capitulation_ok = is_capitulation
+            result.capitulation_volume_ratio = cap_ratio
+            
+            # V3: Multi-timeframe confirmation
+            multi_tf_ok, confirm_rsi = self.check_multi_timeframe(symbol)
+            result.multi_tf_ok = multi_tf_ok
+            result.confirm_rsi = confirm_rsi
+            
+            if not multi_tf_ok:
+                result.rejection_reason = f"Multi-TF: 15m RSI too high ({confirm_rsi:.1f})"
+                return result
+            
+            # Layer 5: ATR Targets
+            if result.price and result.atr:
+                take_profit, stop_loss = self.calculate_layer5_targets(result.price, result.atr)
+                
+                # V3: Check if targets are valid (non-zero)
+                if take_profit == 0 or stop_loss == 0:
+                    result.rejection_reason = "Layer 5: Profit potential too low (Noise Filter)"
+                    return result
+                    
+                result.take_profit = take_profit
+                result.stop_loss = stop_loss
+                result.layer5_targets_set = True
+            else:
+                result.rejection_reason = "Layer 5: Could not calculate targets"
+                return result
+            
+            # All layers passed in Bear Mode!
+            result.is_buy_signal = True
+            
+            # Build status string
+            extras = []
+            if rsi_hook_triggered:
+                extras.append("RSI Hook")
+            if is_capitulation:
+                extras.append("CAPITULATION")
+            if multi_tf_ok and confirm_rsi:
+                extras.append("Multi-TF")
+            
+            extras_str = " + ".join(extras) if extras else ""
+            regime_str = f" [{result.market_regime}]" if result.market_regime != "UNKNOWN" else ""
+            print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{regime_str} {extras_str} for {symbol}")
         
         return result
 

@@ -168,6 +168,20 @@ CAPITULATION_VOLUME_MULT = 5.0  # Volume must be 5x+ average for capitulation
 CAPITULATION_BONUS_SCORE = 0.5  # Extra score for capitulation + RSI Hook
 
 # =============================================================================
+# V4: Bull Mode (Trend-Following Strategy)
+# =============================================================================
+# When market is BULL (BTC > SMA50), switch from mean-reversion to trend-following
+BULL_MODE_ENABLED = True  # Enable trend-following in bull markets
+
+# Bull Mode Entry Conditions
+BULL_RSI_BREAKOUT = 55       # RSI must cross ABOVE this (momentum building)
+BULL_BREAKOUT_PERIOD = 20    # Price must be above N-period high
+
+# Bull Mode Targets (let winners run in trending markets)
+BULL_TAKE_PROFIT_ATR = 2.0   # Larger TP (trend continuation)
+BULL_STOP_LOSS_ATR = 0.8     # Tighter SL (trends are your friend)
+
+# =============================================================================
 # Logging
 # =============================================================================
 LOG_FILE = "data/trades.json"

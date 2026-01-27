@@ -80,6 +80,22 @@ def calculate_volume_ma(df: pd.DataFrame, period: int = VOLUME_MA_PERIOD) -> pd.
     return sma.sma_indicator()
 
 
+def calculate_highest_high(df: pd.DataFrame, period: int = 20) -> pd.Series:
+    """
+    Calculate rolling highest high over N periods.
+    
+    Used for Bull Mode breakout detection.
+    
+    Args:
+        df: DataFrame with 'high' column
+        period: Lookback period for highest high
+        
+    Returns:
+        Series of highest high values
+    """
+    return df['high'].rolling(window=period).max()
+
+
 def analyze_technicals(df: pd.DataFrame) -> Dict:
     """
     Calculate all technical indicators for analysis.
