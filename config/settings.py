@@ -66,8 +66,8 @@ DEAD_HOURS_PRE_BUFFER_MINUTES = 60  # Stop buying this many minutes before dead 
 SCAN_INTERVAL_SECONDS = 60  # OPTIMIZED: 1 minute between scans (High Velocity)
 MIN_24H_VOLUME_USDT = 100000  # Minimum 24h volume in USDT
 MIN_PRICE_CHANGE_PCT = -15.0  # Minimum negative change (looking for dips)
-MAX_PRICE_CHANGE_PCT = -2.0   # OPTIMIZED: Catch smaller dips (was -3.0)
-WATCHLIST_SIZE = 50  # OPTIMIZED: Widen the net (was 20)
+MAX_PRICE_CHANGE_PCT = -1.5   # OPTIMIZED: Catch smaller dips (was -2.0)
+WATCHLIST_SIZE = 60  # OPTIMIZED: Widen the net (was 50)
 
 # =============================================================================
 # V2: Zombie Filter (Liquidity Check)
@@ -101,14 +101,14 @@ ORDERBOOK_BID_ASK_RATIO = 1.0  # Minimum bid/ask volume ratio
 # Layer 3: Technical Indicators + V2 RSI Hook
 # =============================================================================
 RSI_PERIOD = 14
-RSI_OVERSOLD = 30  # Base RSI threshold (Prevent knife catching)
+RSI_OVERSOLD = 32  # Base RSI threshold (Adjusted: 30 -> 32 for more trades)
 BOLLINGER_PERIOD = 20
 BOLLINGER_STD = 2
 
 # V2: RSI Hook - buy on RSI crossing BACK above threshold, not while falling
 RSI_HOOK_ENABLED = True
 RSI_HOOK_STRICT = True  # SAFETY: Strict Hook ON (No falling knives)
-RSI_HOOK_THRESHOLD = 30  # RSI must cross back above this
+RSI_HOOK_THRESHOLD = 32  # RSI must cross back above this (Synced with RSI_OVERSOLD)
 
 # =============================================================================
 # Layer 4: Volume Validation
@@ -158,7 +158,7 @@ OHLCV_LIMIT = 100  # Number of candles to fetch
 # V3: Multi-timeframe confirmation
 MULTI_TIMEFRAME_ENABLED = True
 CONFIRM_TIMEFRAME = "15m"  # Secondary timeframe for confirmation
-MULTI_TF_RSI_THRESHOLD = 40  # RSI must be below this on confirm timeframe
+MULTI_TF_RSI_THRESHOLD = 50  # RSI must be below this on confirm timeframe (Adjusted: 40 -> 50)
 
 # =============================================================================
 # V3: Volume Capitulation Detection
