@@ -252,6 +252,12 @@ class Scanner:
             self._ensure_markets_loaded()
             ohlcv = self.exchange.fetch_ohlcv(symbol, timeframe, limit=limit)
             
+            # CCXT fetch_ohlcv returns the current (incomplete) candle as the last element.
+            # We must remove it to ensure we only trade on CLOSED candles.
+            # This prevents "repainting" where a signal appears mid-candle and then vanishes.
+            if len(ohlcv) > 0:
+                ohlcv.pop()  # Remove last element (current open candle)
+            
             df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
             df['timestamp'] = pd.to_datetime(df['timestamp'], unit='ms')
             df.set_index('timestamp', inplace=True)
