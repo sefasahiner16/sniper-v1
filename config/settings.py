@@ -72,7 +72,10 @@ WATCHLIST_SIZE = 50  # OPTIMIZED: Widen the net (was 20)
 # =============================================================================
 # V2: Zombie Filter (Liquidity Check)
 # =============================================================================
-ZOMBIE_FILTER_ENABLED = False  # DISABLED due to logic bug (revisit later)
+# =============================================================================
+# V2: Zombie Filter (Liquidity Check)
+# =============================================================================
+ZOMBIE_FILTER_ENABLED = True
 ZOMBIE_VOLUME_RATIO = 0.1  # Min 24h volume / market cap ratio
 
 # =============================================================================
@@ -98,14 +101,14 @@ ORDERBOOK_BID_ASK_RATIO = 1.0  # Minimum bid/ask volume ratio
 # Layer 3: Technical Indicators + V2 RSI Hook
 # =============================================================================
 RSI_PERIOD = 14
-RSI_OVERSOLD = 32  # Base RSI threshold (Balanced: 30-35)
+RSI_OVERSOLD = 30  # Base RSI threshold (Prevent knife catching)
 BOLLINGER_PERIOD = 20
 BOLLINGER_STD = 2
 
 # V2: RSI Hook - buy on RSI crossing BACK above threshold, not while falling
 RSI_HOOK_ENABLED = True
 RSI_HOOK_STRICT = True  # SAFETY: Strict Hook ON (No falling knives)
-RSI_HOOK_THRESHOLD = 32  # RSI must cross back above this
+RSI_HOOK_THRESHOLD = 30  # RSI must cross back above this
 
 # =============================================================================
 # Layer 4: Volume Validation
@@ -117,8 +120,8 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # Layer 5: ATR-Based Targets
 # =============================================================================
 ATR_PERIOD = 14
-TAKE_PROFIT_ATR_MULTIPLIER = 3.0  # GREED: Huge Upside (Let winners run)
-STOP_LOSS_ATR_MULTIPLIER = 1.2    # SAFETY: Wide Stop (Survive the wiggle)
+TAKE_PROFIT_ATR_MULTIPLIER = 1.5  # BALANCED: 1.5x Reward
+STOP_LOSS_ATR_MULTIPLIER = 1.0    # SAFETY: 1.0x Risk (1:1.5 Ratio)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
@@ -127,8 +130,8 @@ MIN_TARGET_PROFIT_PCT = 1.5
 # =============================================================================
 # Position Management + V2 Ratchet Trailing Stop
 # =============================================================================
-TRAILING_STOP_ACTIVATION_PCT = 0.5  # Activate quickly (Break-Even Strategy)
-TRAILING_STOP_DISTANCE_PCT = 0.5    # Distance = Activation -> Initial Stop = Entry Price
+TRAILING_STOP_ACTIVATION_PCT = 1.5  # Let it run to target before trailing
+TRAILING_STOP_DISTANCE_PCT = 0.5    # Trail 0.5% behind price
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True

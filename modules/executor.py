@@ -431,6 +431,7 @@ class Executor:
                 
                 # Get stats for notification
                 stats = get_performance_stats()
+                print(f"[EXECUTOR] 📊 Sending stats: {stats}")
                 notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance, stats)
                 
             except Exception as e:

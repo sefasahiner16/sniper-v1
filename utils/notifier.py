@@ -101,7 +101,7 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
     }.get(reason, reason)
     
     stats_text = ""
-    if stats:
+    if stats is not None:
         stats_text = f"""
 📈 *Performance:*
 🏆 *Win Rate:* {stats.get('win_rate', 0)}% ({stats.get('wins', 0)}/{stats.get('total_trades', 0)})
