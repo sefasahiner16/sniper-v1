@@ -18,7 +18,8 @@ from config.settings import (
     MIN_24H_VOLUME_USDT, MIN_PRICE_CHANGE_PCT, MAX_PRICE_CHANGE_PCT,
     WATCHLIST_SIZE,
     ZOMBIE_FILTER_ENABLED, ZOMBIE_VOLUME_RATIO,
-    CHAMELEON_MODE_ENABLED, BTC_SMA_PERIOD
+    CHAMELEON_MODE_ENABLED, BTC_SMA_PERIOD,
+    BTC_RSI_PERIOD, BTC_RSI_THRESHOLD
 )
 
 
@@ -392,12 +393,6 @@ class Scanner:
     def get_btc_sma(self, period: int = BTC_SMA_PERIOD) -> Optional[float]:
         """
         Get BTC Simple Moving Average for market regime detection.
-        
-        Args:
-            period: SMA period (default 50)
-            
-        Returns:
-            BTC SMA value or None
         """
         try:
             # Fetch daily candles for SMA calculation
@@ -415,18 +410,44 @@ class Scanner:
         except Exception as e:
             print(f"[SCANNER] Error calculating BTC SMA: {e}")
             return None
-    
+
+    def get_btc_rsi(self, period: int = BTC_RSI_PERIOD) -> Optional[float]:
+        """
+        Calculates BTC RSI on Daily timeframe.
+        """
+        try:
+             # Fetch daily candles
+            ohlcv = self.exchange.fetch_ohlcv('BTC/USDT', '1d', limit=period + 50)
+            if len(ohlcv) < period + 1:
+                return None
+            
+            # Use pandas for RSI calc
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Calculate RSI manually (or use library if available, but staying dependency-light)
+            delta = df['close'].diff()
+            gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+            loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+            
+            rs = gain / loss
+            rsi = 100 - (100 / (1 + rs))
+            
+            return rsi.iloc[-1]
+            
+        except Exception as e:
+            print(f"[SCANNER] Error calculating BTC RSI: {e}")
+            return None
+
     def get_market_regime(self) -> Tuple[str, Optional[float], Optional[float]]:
         """
         V2 Chameleon Mode: Detect current market regime.
         
         Logic:
-        - BTC > SMA50 → Bull Market
-        - BTC < SMA50 → Bear Market
+        - BULL: BTC > SMA50 AND BTC RSI > 50
+        - BEAR: Otherwise
         
         Returns:
             Tuple of (regime, btc_price, btc_sma)
-            regime is one of: "BULL", "BEAR", "UNKNOWN"
         """
         if not CHAMELEON_MODE_ENABLED:
             return "UNKNOWN", None, None
@@ -439,13 +460,19 @@ class Scanner:
             # Get BTC SMA
             btc_sma = self.get_btc_sma()
             
-            if btc_price == 0 or btc_sma is None:
+            # Get BTC RSI
+            btc_rsi = self.get_btc_rsi()
+            
+            if btc_price == 0 or btc_sma is None or btc_rsi is None:
                 return "UNKNOWN", btc_price, btc_sma
             
-            if btc_price > btc_sma:
+            # Revised Logic: Bull requires Trend AND Momentum
+            if btc_price > btc_sma and btc_rsi > BTC_RSI_THRESHOLD:
                 regime = "BULL"
+                print(f"[SCANNER] Market Regime: BULL (Price ${btc_price:.0f} > SMA ${btc_sma:.0f} AND RSI {btc_rsi:.1f} > {BTC_RSI_THRESHOLD})")
             else:
                 regime = "BEAR"
+                print(f"[SCANNER] Market Regime: BEAR/NEUTRAL (Price ${btc_price:.0f}, SMA ${btc_sma:.0f}, RSI {btc_rsi:.1f})")
             
             return regime, btc_price, btc_sma
             

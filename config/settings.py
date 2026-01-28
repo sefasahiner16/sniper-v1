@@ -81,6 +81,8 @@ ZOMBIE_VOLUME_RATIO = 0.3  # Min 24h volume / market cap ratio (Active Trading)
 # =============================================================================
 BTC_SENTIMENT_THRESHOLD = -0.5  # Abort if BTC drops more than this %
 BTC_SMA_PERIOD = 50  # BTC SMA for market regime detection
+BTC_RSI_PERIOD = 14  # RSI period for BTC confirmation
+BTC_RSI_THRESHOLD = 50  # BTC RSI must be > this for Bull Mode
 
 # V2: Chameleon Mode - dynamic thresholds based on market regime
 CHAMELEON_MODE_ENABLED = True
