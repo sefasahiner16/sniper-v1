@@ -107,7 +107,7 @@ BOLLINGER_STD = 2
 
 # V2: RSI Hook - buy on RSI crossing BACK above threshold, not while falling
 RSI_HOOK_ENABLED = True
-RSI_HOOK_STRICT = False  # Disabled for more trades (other filters still protect)
+RSI_HOOK_STRICT = True  # ENABLED: Wait for curl up (Prevents falling knives)
 RSI_HOOK_THRESHOLD = 32  # RSI must cross back above this (Synced with RSI_OVERSOLD)
 
 # =============================================================================
@@ -120,18 +120,18 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # Layer 5: ATR-Based Targets
 # =============================================================================
 ATR_PERIOD = 14
-TAKE_PROFIT_ATR_MULTIPLIER = 1.5  # BALANCED: 1.5x Reward
-STOP_LOSS_ATR_MULTIPLIER = 0.9    # TIGHTER: 0.9x Risk (1:1.67 Ratio) - less risk per trade
+TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward (High ceiling for runners)
+STOP_LOSS_ATR_MULTIPLIER = 0.7    # TIGHTER: 0.7x Risk (Quick exit if wrong)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
-MIN_TARGET_PROFIT_PCT = 1.5
+MIN_TARGET_PROFIT_PCT = 2.0
 
 # =============================================================================
 # Position Management + V2 Ratchet Trailing Stop
 # =============================================================================
-TRAILING_STOP_ACTIVATION_PCT = 1.5  # Let it run to target before trailing
-TRAILING_STOP_DISTANCE_PCT = 0.5    # Trail 0.5% behind price
+TRAILING_STOP_ACTIVATION_PCT = 0.8  # TIGHT: Activate early to lock in gains
+TRAILING_STOP_DISTANCE_PCT = 0.8    # TIGHT: Keep close to price
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True
@@ -140,7 +140,7 @@ RATCHET_TRAILING_STOP = True
 TIME_EXIT_MINUTES = 45  # Exit if no profit after this many minutes
 TIME_EXIT_MIN_PROFIT_PCT = 1.0  # Minimum profit % to stay in trade past timeout
 
-HARD_STOP_LOSS_PCT = 5.0  # Maximum loss per trade
+HARD_STOP_LOSS_PCT = 2.4  # SAFETY: Max loss 2.4% (Prevents 5% drops)
 
 # =============================================================================
 # Risk Management
