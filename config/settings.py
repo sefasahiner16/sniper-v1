@@ -119,7 +119,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # =============================================================================
 ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward
-STOP_LOSS_ATR_MULTIPLIER = 2.0    # RELAXED: 2.0x Risk (Wide initial room)
+STOP_LOSS_ATR_MULTIPLIER = 1.2    # TARGET: ~1.2% risk (User Request)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
@@ -128,8 +128,8 @@ MIN_TARGET_PROFIT_PCT = 2.0
 # =============================================================================
 # Position Management + V2 Ratchet Trailing Stop
 # =============================================================================
-TRAILING_STOP_ACTIVATION_PCT = 1.0  # Activate at 1% profit
-TRAILING_STOP_DISTANCE_PCT = 0.5    # TIGHT: Trail closely by 0.5%
+TRAILING_STOP_ACTIVATION_PCT = 0.5  # BREAK-EVEN: Activate at 0.5% profit
+TRAILING_STOP_DISTANCE_PCT = 0.5    # TIGHT: Distance 0.5% (BE at activation)
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True
@@ -138,7 +138,7 @@ RATCHET_TRAILING_STOP = True
 TIME_EXIT_MINUTES = 45  # Exit if no profit after this many minutes
 TIME_EXIT_MIN_PROFIT_PCT = 1.0  # Minimum profit % to stay in trade past timeout
 
-HARD_STOP_LOSS_PCT = 2.4  # SAFETY: Max loss 2.4% (Prevents 5% drops)
+HARD_STOP_LOSS_PCT = 2.4  # SAFETY: Max loss 2.4%
 
 # =============================================================================
 # Risk Management
