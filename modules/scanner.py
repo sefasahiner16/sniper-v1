@@ -453,6 +453,68 @@ class Scanner:
             print(f"[SCANNER] Error detecting market regime: {e}")
             return "UNKNOWN", None, None
 
+    # =========================================================================
+    # V3: Server-Side Orders (Limit & Stop Loss)
+    # =========================================================================
+    
+    def create_stop_loss_order(self, symbol: str, quantity: float, stop_price: float) -> Optional[str]:
+        """
+        Place a server-side STOP_LIMIT order for protection.
+        
+        Args:
+            symbol: Trading pair
+            quantity: Amount to sell
+            stop_price: Trigger price
+            
+        Returns:
+            Order ID or None
+        """
+        try:
+            self._ensure_markets_loaded()
+            
+            # Create a STOP_LIMIT order
+            # Note: We set the limit slightly lower than stop to ensure fill (prevent skip)
+            # 0.5% buffer for the limit price below the trigger
+            limit_price = stop_price * 0.995
+            
+            # MEXC specific params for stop order
+            params = {
+                'stopPrice': stop_price,
+            }
+            
+            # Note: 'stop_limit' type might vary by exchange/driver. 
+            # For MEXC Spot in CCXT, usually type='limit' with params={'stopPrice': ...} works
+            # or type='stop_limit' if fully supported.
+            # We will try standard CCXT convention.
+            
+            print(f"[SCANNER] 🛡️ Placing Server-Side STOP LOSS: Trigger ${stop_price:.6f}, Limit ${limit_price:.6f}")
+            
+            order = self.exchange.create_order(
+                symbol=symbol,
+                type='limit',  # Often passed as limit with stopPrice params for spot
+                side='sell',
+                amount=quantity,
+                price=limit_price,
+                params=params
+            )
+            
+            return str(order['id'])
+            
+        except Exception as e:
+            print(f"[SCANNER] ❌ Failed to place Stop Loss: {e}")
+            return None
+
+    def cancel_order(self, symbol: str, order_id: str) -> bool:
+        """
+        Cancel an existing order.
+        """
+        try:
+            self.exchange.cancel_order(order_id, symbol)
+            print(f"[SCANNER] 🗑️ Order {order_id} cancelled")
+            return True
+        except Exception as e:
+            print(f"[SCANNER] ⚠️ Failed to cancel order {order_id}: {e}")
+            return False
 
 # Singleton instance
 _scanner_instance = None

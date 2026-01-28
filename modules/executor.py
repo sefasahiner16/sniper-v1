@@ -59,6 +59,7 @@ class Position:
     highest_price: float = field(default=0.0)
     entry_time: datetime = field(default_factory=datetime.now)
     timer: Timer = field(default_factory=Timer)
+    server_stop_order_id: Optional[str] = None  # V3: Server-side stop order ID
     
     def __post_init__(self):
         self.highest_price = self.entry_price
@@ -130,8 +131,6 @@ class Executor:
     def can_trade(self) -> bool:
         """
         Check if we can open a new trade.
-        
-        V2: Includes dead hours check.
         """
         # Already in a position?
         if self.current_position is not None:
@@ -165,12 +164,6 @@ class Executor:
     def enter_position(self, analysis: AnalysisResult) -> bool:
         """
         Enter a new position based on analysis result.
-        
-        Args:
-            analysis: AnalysisResult with buy signal
-            
-        Returns:
-            True if entry successful
         """
         if not analysis.is_buy_signal:
             print("[EXECUTOR] Cannot enter - no buy signal")
@@ -203,6 +196,8 @@ class Executor:
         print(f"Mode:        {'PAPER' if self.is_paper_mode else 'LIVE'}")
         print('='*50)
         
+        server_stop_id = None
+        
         if self.is_paper_mode:
             # Paper trading - simulate entry
             trade_id = log_trade_entry(
@@ -223,14 +218,10 @@ class Executor:
                 stop_loss=stop_loss
             )
             
-            # Update paper balance (we "spent" it)
+            # Update paper balance
             self.paper_balance = 0
-            
             self.state = State.IN_POSITION
-            
-            # Send Telegram notification
             notify_buy(symbol, entry_price, take_profit, stop_loss)
-            
             print(f"[EXECUTOR] ✅ Paper trade opened: {trade_id}")
             return True
         
@@ -240,12 +231,16 @@ class Executor:
                 print(f"[EXECUTOR] 🚀 Placing LIVE LIMIT BUY order for {symbol} at ${entry_price:.6f}")
                 order = self.scanner.exchange.create_limit_buy_order(symbol, quantity, entry_price)
                 
-                # In a real bot, we would monitor this order for fill. 
-                # For simplicity in V3 (Hybrid), we assume fill or implement a wait loop separately.
-                # Just logging it as entering position for now.
-                
                 trade_id = str(order.get('id', int(time.time())))
                 
+                # V3: Server-Side Stop Loss
+                # Place stop order immediately after buy
+                server_stop_id = self.scanner.create_stop_loss_order(symbol, quantity, stop_loss)
+                if server_stop_id:
+                    print(f"[EXECUTOR] 🛡️ Server-Side Stop Loss ACTIVE: Order ID {server_stop_id}")
+                else:
+                     print(f"[EXECUTOR] ⚠️ WARNING: Server-Side Stop Loss FAILED. Using Software fallback.")
+
                 log_trade_entry(
                     symbol=symbol,
                     entry_price=entry_price,
@@ -261,7 +256,8 @@ class Executor:
                     entry_price=entry_price,
                     quantity=quantity,
                     take_profit=take_profit,
-                    stop_loss=stop_loss
+                    stop_loss=stop_loss,
+                    server_stop_order_id=server_stop_id
                 )
                 
                 self.state = State.IN_POSITION
@@ -271,16 +267,13 @@ class Executor:
                 
             except Exception as e:
                 print(f"[EXECUTOR] ❌ Live limit buy failed: {e}")
-                notify_circuit_breaker(0, 0) # Use notifier to alert error
+                notify_circuit_breaker(0, 0)
                 self.state = State.IDLE
                 return False
     
     def update_trailing_stop(self, current_price: float) -> None:
         """
-        Update trailing stop based on current price.
-        
-        V2 Ratchet Mode: Trailing stop only moves UP, never down.
-        This prevents a winning trade from turning into a loss.
+        Update trailing stop and adjust server-side order.
         """
         if self.current_position is None:
             return
@@ -291,80 +284,78 @@ class Executor:
         if current_price > pos.highest_price:
             pos.highest_price = current_price
         
-        # Calculate current P&L
+        # Calculate P&L
         pnl_pct = calculate_pnl_pct(pos.entry_price, current_price)
+        
+        new_stop_price = None
         
         # Activate trailing stop if threshold reached
         if not pos.trailing_activated and pnl_pct >= TRAILING_STOP_ACTIVATION_PCT:
             pos.trailing_activated = True
             pos.trailing_stop = current_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            new_stop_price = pos.trailing_stop
             print(f"[EXECUTOR] 📈 Trailing stop ACTIVATED at ${pos.trailing_stop:.6f}")
         
-        # V2 Ratchet Mode: Only move trailing stop UP, never down
+        # V2 Ratchet Mode: Only move trailing stop UP
         elif pos.trailing_activated:
             new_trailing = pos.highest_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
             
-            # RATCHET: Only update if new stop is HIGHER than current
             if RATCHET_TRAILING_STOP:
                 if new_trailing > pos.trailing_stop:
                     old_stop = pos.trailing_stop
                     pos.trailing_stop = new_trailing
+                    new_stop_price = new_trailing
                     print(f"[EXECUTOR] 📈 Ratchet: Trailing stop moved UP ${old_stop:.6f} → ${pos.trailing_stop:.6f}")
             else:
-                # Legacy behavior: always update based on highest price
                 if new_trailing > pos.trailing_stop:
                     pos.trailing_stop = new_trailing
+                    new_stop_price = new_trailing
                     print(f"[EXECUTOR] 📈 Trailing stop moved to ${pos.trailing_stop:.6f}")
-    
+
+        # V3: Update Server-Side Stop Order if changed
+        if new_stop_price and not self.is_paper_mode:
+            self._update_server_stop(pos, new_stop_price)
+
+    def _update_server_stop(self, pos: Position, new_price: float) -> None:
+        """Internal helper to update server-side stop."""
+        try:
+            # Cancel old stop
+            if pos.server_stop_order_id:
+                print(f"[EXECUTOR] 🔄 Updating Server Stop: Cancelling {pos.server_stop_order_id}...")
+                self.scanner.cancel_order(pos.symbol, pos.server_stop_order_id)
+            
+            # Place new stop
+            new_id = self.scanner.create_stop_loss_order(pos.symbol, pos.quantity, new_price)
+            if new_id:
+                pos.server_stop_order_id = new_id
+                print(f"[EXECUTOR] ✅ Server Stop Updated to ${new_price:.6f}")
+            else:
+                print(f"[EXECUTOR] ❌ Failed to update Server Stop!")
+        except Exception as e:
+            print(f"[EXECUTOR] ⚠️ Error updating server stop: {e}")
+
     def check_exit_conditions(self, current_price: float) -> Optional[str]:
-        """
-        Check if any exit condition is met.
-        
-        Returns:
-            Exit reason string or None
-        """
+        """Check exit conditions."""
         if self.current_position is None:
             return None
         
         pos = self.current_position
         pnl_pct = calculate_pnl_pct(pos.entry_price, current_price)
         
-        # Take Profit hit
-        if current_price >= pos.take_profit:
-            return "TP_HIT"
+        if current_price >= pos.take_profit: return "TP_HIT"
+        if current_price <= pos.stop_loss: return "SL_HIT"
+        if pos.trailing_activated and pos.trailing_stop and current_price <= pos.trailing_stop: return "TRAILING_STOP"
         
-        # Hard Stop Loss hit
-        if current_price <= pos.stop_loss:
-            return "SL_HIT"
-        
-        # Trailing Stop hit
-        if pos.trailing_activated and pos.trailing_stop and current_price <= pos.trailing_stop:
-            return "TRAILING_STOP"
-        
-        # Time-based exit (V2: configurable minimum profit threshold)
         if pos.timer.has_exceeded(TIME_EXIT_MINUTES):
-            if pnl_pct < TIME_EXIT_MIN_PROFIT_PCT:
-                return "TIME_EXIT"
+            if pnl_pct < TIME_EXIT_MIN_PROFIT_PCT: return "TIME_EXIT"
         
-        # Hard max loss (fallback)
-        if pnl_pct <= -HARD_STOP_LOSS_PCT:
-            return "SL_HIT"
+        if pnl_pct <= -HARD_STOP_LOSS_PCT: return "SL_HIT"
         
         return None
     
     def exit_position(self, reason: str, current_price: Optional[float] = None) -> bool:
-        """
-        Exit the current position.
-        
-        Args:
-            reason: Exit reason
-            current_price: Exit price (fetched if not provided)
-            
-        Returns:
-            True if exit successful
-        """
+        """Exit the current position."""
         if self.current_position is None:
-            print("[EXECUTOR] No position to exit")
             return False
         
         self.state = State.EXIT
@@ -374,15 +365,18 @@ class Executor:
         if current_price is None:
             current_price = self.get_current_price(pos.symbol)
             if current_price is None:
-                print("[EXECUTOR] Could not get exit price")
                 self.state = State.IN_POSITION
                 return False
+        
+        # V3: Cancel Server-Side Stop before selling
+        if not self.is_paper_mode and pos.server_stop_order_id:
+            print(f"[EXECUTOR] 🛑 Cancelling Stop Loss {pos.server_stop_order_id} before exit...")
+            self.scanner.cancel_order(pos.symbol, pos.server_stop_order_id)
+            pos.server_stop_order_id = None # Clear ID
         
         # Calculate P&L
         pnl_pct = calculate_pnl_pct(pos.entry_price, current_price)
         pnl_usd = (current_price - pos.entry_price) * pos.quantity
-        
-        # Calculate new balance
         new_balance = pos.quantity * current_price
         
         print(f"\n{'='*50}")
@@ -396,29 +390,14 @@ class Executor:
         print('='*50)
         
         if self.is_paper_mode:
-            # Log the exit
-            try:
-                log_trade_exit(
-                    trade_id=pos.trade_id,
-                    exit_price=current_price,
-                    exit_reason=reason,
-                    balance_after=new_balance
-                )
-            except Exception as e:
-                print(f"[EXECUTOR] ⚠️ Logging failed: {e}")
-            
-            # Update paper balance
+            log_trade_exit(pos.trade_id, current_price, reason, new_balance)
             self.paper_balance = new_balance
-            
-            # Send Telegram notification
-            # Calculate stats for notification
             stats = get_performance_stats()
             notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance, stats)
         
         else:
             # LIVE TRADING EXIT
             try:
-                # STRATEGY: Limit for TP (Greed), Market for SL (Fear/Safety)
                 if reason == "TP_HIT":
                     print(f"[EXECUTOR] 💰 Placing LIVE LIMIT SELL order (Take Profit) for {pos.symbol} at ${current_price:.6f}")
                     self.scanner.exchange.create_limit_sell_order(pos.symbol, pos.quantity, current_price)
@@ -426,26 +405,15 @@ class Executor:
                     print(f"[EXECUTOR] 🚨 Placing LIVE MARKET SELL order ({reason}) for {pos.symbol}")
                     self.scanner.exchange.create_market_sell_order(pos.symbol, pos.quantity)
                 
-                # Log and notify
                 log_trade_exit(pos.trade_id, current_price, reason, new_balance)
-                
-                # Get stats for notification
                 stats = get_performance_stats()
-                print(f"[EXECUTOR] 📊 Sending stats: {stats}")
                 notify_sell(pos.symbol, pos.entry_price, current_price, pnl_pct, pnl_usd, reason, new_balance, stats)
                 
             except Exception as e:
                 print(f"[EXECUTOR] ❌ Live exit failed: {e}")
-                # Note: Critical failure if we can't sell. 
-                # In a robust system, we would have a retry loop here.
         
-        # Clear position
         self.current_position = None
         self.state = State.IDLE
-        
-        emoji = "🟢" if pnl_pct >= 0 else "🔴"
-        print(f"[EXECUTOR] {emoji} Position closed: {pnl_pct:+.2f}%")
-        
         return True
     
     def monitor_position(self) -> None:
