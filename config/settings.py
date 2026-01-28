@@ -108,7 +108,7 @@ BOLLINGER_STD = 2
 # V2: RSI Hook - buy on RSI crossing BACK above threshold, not while falling
 RSI_HOOK_ENABLED = True
 RSI_HOOK_STRICT = True  # ENABLED: Wait for curl up (Prevents falling knives)
-RSI_HOOK_THRESHOLD = 32  # RSI must cross back above this (Synced with RSI_OVERSOLD)
+RSI_HOOK_THRESHOLD = 30  # EARLIER ENTRY: Adjusted to 30 (was 32)
 
 # =============================================================================
 # Layer 4: Volume Validation
@@ -121,7 +121,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # =============================================================================
 ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward (High ceiling for runners)
-STOP_LOSS_ATR_MULTIPLIER = 0.7    # TIGHTER: 0.7x Risk (Quick exit if wrong)
+STOP_LOSS_ATR_MULTIPLIER = 0.85   # RELAXED: 0.85x Risk (Give room to breathe)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
