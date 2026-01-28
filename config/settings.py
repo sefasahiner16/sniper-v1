@@ -126,10 +126,15 @@ STOP_LOSS_ATR_MULTIPLIER = 1.2    # TARGET: ~1.2% risk (User Request)
 MIN_TARGET_PROFIT_PCT = 2.0
 
 # =============================================================================
-# Position Management + V2 Ratchet Trailing Stop
+# Position Management + V2 Dual-Stage Ratchet
 # =============================================================================
-TRAILING_STOP_ACTIVATION_PCT = 0.5  # BREAK-EVEN: Activate at 0.5% profit
-TRAILING_STOP_DISTANCE_PCT = 0.5    # TIGHT: Distance 0.5% (BE at activation)
+# Stage 1: Break-Even
+BREAK_EVEN_TRIGGER_PCT = 1.0  # Move stop to BE when profit hits 1.0%
+BREAK_EVEN_TARGET_PCT = 0.1   # The BE target (Entry + 0.1% to cover fees)
+
+# Stage 2: Wide Trailing Stop
+TRAILING_STOP_ACTIVATION_PCT = 2.0  # Start trailing at 2.0% profit
+TRAILING_STOP_DISTANCE_PCT = 1.5    # WIDE: Trail by 1.5% (Allows volatility)
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True

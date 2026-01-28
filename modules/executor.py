@@ -18,6 +18,7 @@ from datetime import datetime
 from config.settings import (
     PAPER_TRADING, INITIAL_BALANCE,
     TRAILING_STOP_ACTIVATION_PCT, TRAILING_STOP_DISTANCE_PCT,
+    BREAK_EVEN_TRIGGER_PCT, BREAK_EVEN_TARGET_PCT,
     TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, HARD_STOP_LOSS_PCT,
     MAX_CONSECUTIVE_LOSSES, CIRCUIT_BREAKER_HOURS,
     RATCHET_TRAILING_STOP
@@ -273,7 +274,15 @@ class Executor:
     
     def update_trailing_stop(self, current_price: float) -> None:
         """
-        Update trailing stop and adjust server-side order.
+        Update trailing stop based on current price (Dual-Stage Ratchet).
+        
+        Stage 1: Break-Even (Safety)
+        - Trigger: +1.0% Profit
+        - Action: Move Stop to +0.1% (Entry + Fees)
+        
+        Stage 2: Wide Trail (Growth)
+        - Trigger: +2.0% Profit
+        - Action: Trail by 1.5% (Wide Gap)
         """
         if self.current_position is None:
             return
@@ -289,28 +298,40 @@ class Executor:
         
         new_stop_price = None
         
-        # Activate trailing stop if threshold reached
-        if not pos.trailing_activated and pnl_pct >= TRAILING_STOP_ACTIVATION_PCT:
-            pos.trailing_activated = True
-            pos.trailing_stop = current_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
-            new_stop_price = pos.trailing_stop
-            print(f"[EXECUTOR] 📈 Trailing stop ACTIVATED at ${pos.trailing_stop:.6f}")
-        
-        # V2 Ratchet Mode: Only move trailing stop UP
-        elif pos.trailing_activated:
+        # ---------------------------------------------------------------------
+        # STAGE 2: WIDE TRAILING STOP (Growth Phase)
+        # ---------------------------------------------------------------------
+        if pnl_pct >= TRAILING_STOP_ACTIVATION_PCT:
+            # Check if we are already trailing or need to start
+            if not pos.trailing_activated:
+                pos.trailing_activated = True
+                print(f"[EXECUTOR] 🚀 Starting STAGE 2: Wide Trail Activated (+{pnl_pct:.2f}%)")
+            
+            # Calculate trail price (Highest Price - Distance)
             new_trailing = pos.highest_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
             
-            if RATCHET_TRAILING_STOP:
-                if new_trailing > pos.trailing_stop:
-                    old_stop = pos.trailing_stop
-                    pos.trailing_stop = new_trailing
-                    new_stop_price = new_trailing
-                    print(f"[EXECUTOR] 📈 Ratchet: Trailing stop moved UP ${old_stop:.6f} → ${pos.trailing_stop:.6f}")
-            else:
-                if new_trailing > pos.trailing_stop:
-                    pos.trailing_stop = new_trailing
-                    new_stop_price = new_trailing
-                    print(f"[EXECUTOR] 📈 Trailing stop moved to ${pos.trailing_stop:.6f}")
+            # Check if we should update (Ratchet: Only move UP)
+            current_stop = pos.trailing_stop if pos.trailing_stop else pos.stop_loss
+            
+            if new_trailing > current_stop:
+                pos.trailing_stop = new_trailing
+                new_stop_price = new_trailing
+                print(f"[EXECUTOR] 📈 Trailing Update: ${new_trailing:.6f} (Gap: {TRAILING_STOP_DISTANCE_PCT}%)")
+
+        # ---------------------------------------------------------------------
+        # STAGE 1: BREAK-EVEN (Safety Phase)
+        # ---------------------------------------------------------------------
+        elif pnl_pct >= BREAK_EVEN_TRIGGER_PCT and not pos.trailing_activated:
+            # Target price = Entry * (1 + 0.1%)
+            be_price = pos.entry_price * (1 + BREAK_EVEN_TARGET_PCT / 100)
+            
+            # Only update if current stop is below BE price
+            current_stop = pos.trailing_stop if pos.trailing_stop else pos.stop_loss
+            
+            if be_price > current_stop:
+                pos.trailing_stop = be_price
+                new_stop_price = be_price
+                print(f"[EXECUTOR] 🛡️ STAGE 1: Break-Even Triggered (+{pnl_pct:.2f}%) -> Stop moved to ${be_price:.6f}")
 
         # V3: Update Server-Side Stop Order if changed
         if new_stop_price and not self.is_paper_mode:
