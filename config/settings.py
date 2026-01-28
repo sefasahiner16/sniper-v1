@@ -65,7 +65,7 @@ DEAD_HOURS_PRE_BUFFER_MINUTES = 60  # Stop buying this many minutes before dead 
 # Scanner Settings
 # =============================================================================
 SCAN_INTERVAL_SECONDS = 60  # OPTIMIZED: 1 minute between scans (High Velocity)
-MIN_24H_VOLUME_USDT = 10000000  # HIGH LIQUIDITY: Min $10M volume (Anti-Zombie)
+MIN_24H_VOLUME_USDT = 2000000  # HIGH LIQUIDITY: Min $2M volume (Anti-Zombie)
 MIN_PRICE_CHANGE_PCT = -15.0  # Minimum negative change (looking for dips)
 MAX_PRICE_CHANGE_PCT = -1.5   # OPTIMIZED: Catch smaller dips (was -2.0)
 WATCHLIST_SIZE = 60  # OPTIMIZED: Widen the net (was 50)
