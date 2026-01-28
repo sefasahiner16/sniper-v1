@@ -61,10 +61,11 @@ DEAD_HOURS_END_UTC = 6  # Trading pause end (06:00 UTC = 09:00 Turkey) - OPTIMIZ
 DEAD_HOURS_PRE_BUFFER_MINUTES = 60  # Stop buying this many minutes before dead hours
 
 # =============================================================================
+# =============================================================================
 # Scanner Settings
 # =============================================================================
 SCAN_INTERVAL_SECONDS = 60  # OPTIMIZED: 1 minute between scans (High Velocity)
-MIN_24H_VOLUME_USDT = 100000  # Minimum 24h volume in USDT
+MIN_24H_VOLUME_USDT = 10000000  # HIGH LIQUIDITY: Min $10M volume (Anti-Zombie)
 MIN_PRICE_CHANGE_PCT = -15.0  # Minimum negative change (looking for dips)
 MAX_PRICE_CHANGE_PCT = -1.5   # OPTIMIZED: Catch smaller dips (was -2.0)
 WATCHLIST_SIZE = 60  # OPTIMIZED: Widen the net (was 50)
@@ -72,11 +73,8 @@ WATCHLIST_SIZE = 60  # OPTIMIZED: Widen the net (was 50)
 # =============================================================================
 # V2: Zombie Filter (Liquidity Check)
 # =============================================================================
-# =============================================================================
-# V2: Zombie Filter (Liquidity Check)
-# =============================================================================
 ZOMBIE_FILTER_ENABLED = True
-ZOMBIE_VOLUME_RATIO = 0.1  # Min 24h volume / market cap ratio
+ZOMBIE_VOLUME_RATIO = 0.3  # Min 24h volume / market cap ratio (Active Trading)
 
 # =============================================================================
 # Layer 1: BTC Sentiment + V2 Chameleon Mode
@@ -120,8 +118,8 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # Layer 5: ATR-Based Targets
 # =============================================================================
 ATR_PERIOD = 14
-TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward (High ceiling for runners)
-STOP_LOSS_ATR_MULTIPLIER = 0.85   # RELAXED: 0.85x Risk (Give room to breathe)
+TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward
+STOP_LOSS_ATR_MULTIPLIER = 2.0    # RELAXED: 2.0x Risk (Wide initial room)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
@@ -130,8 +128,8 @@ MIN_TARGET_PROFIT_PCT = 2.0
 # =============================================================================
 # Position Management + V2 Ratchet Trailing Stop
 # =============================================================================
-TRAILING_STOP_ACTIVATION_PCT = 0.8  # TIGHT: Activate early to lock in gains
-TRAILING_STOP_DISTANCE_PCT = 0.8    # TIGHT: Keep close to price
+TRAILING_STOP_ACTIVATION_PCT = 1.0  # Activate at 1% profit
+TRAILING_STOP_DISTANCE_PCT = 0.5    # TIGHT: Trail closely by 0.5%
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True
@@ -148,6 +146,11 @@ HARD_STOP_LOSS_PCT = 2.4  # SAFETY: Max loss 2.4% (Prevents 5% drops)
 MAX_CONSECUTIVE_LOSSES = 3  # Trigger circuit breaker after this many
 CIRCUIT_BREAKER_HOURS = 12  # Pause duration after circuit breaker
 MAX_POSITION_PCT = 100  # Use 100% of balance per trade (single position model)
+
+# V3: Advanced Cooldowns (Anti-Addiction)
+COOLDOWN_MINUTES = 60         # Wait 60m before re-buying same coin after ANY sale
+BLACKLIST_LOSSES = 2          # Blacklist coin after this many losses in 24h
+BLACKLIST_DURATION_HOURS = 24 # Duration of blacklist for "cursed" coins
 
 # =============================================================================
 # Timeframes

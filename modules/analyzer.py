@@ -32,10 +32,38 @@ from config.settings import (
     CAPITULATION_ENABLED, CAPITULATION_VOLUME_MULT,
     # V4: Bull Mode settings
     BULL_MODE_ENABLED, BULL_RSI_BREAKOUT, BULL_BREAKOUT_PERIOD,
-    BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR
+    BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR,
+    COOLDOWN_MINUTES, BLACKLIST_LOSSES, BLACKLIST_DURATION_HOURS
 )
 from modules.scanner import get_scanner
 from modules.indicators import analyze_technicals, get_atr_targets, calculate_rsi, calculate_highest_high
+from utils.logger import load_trades
+from datetime import datetime, timedelta
+
+
+@dataclass
+class AnalysisResult:
+    """Result of the 5-layer analysis."""
+    symbol: str
+    is_buy_signal: bool
+    
+    # Layer results
+    layer1_btc_ok: bool = False
+    # ... (keeping existing fields implicitly via ... but for replace_file_content I need to be precise or use mulitple chunks if they are far apart)
+    # Actually, I should just add the imports and the method.
+    
+    # Let me try to do it in 2 chunks to be safe.
+    
+    # Method implementation will be added to Analyzer class.
+    # Logic in analyze() will be added at the start.
+
+    # Wait, I cannot use "..." in ReplacementContent if I want to match exactly. 
+    # I will use separate chunks.
+
+# Chunk 1: Imports
+# Chunk 2: Add check_trade_frequency_limits method to Analyzer 
+# Chunk 3: Call it in analyze()
+
 
 
 @dataclass
@@ -136,6 +164,58 @@ class Analyzer:
             print(f"[ANALYZER] Layer 1 ✗: BTC change {btc_change:.2f}% <= {BTC_SENTIMENT_THRESHOLD}% (market too risky)")
         
         return passed, btc_change
+    
+        return passed, btc_change
+    
+    def check_trade_frequency_limits(self, symbol: str) -> bool:
+        """
+        V3: Check Cooldown and Blacklist rules.
+        
+        Rules:
+        1. Cooldown: Cannot buy same coin within COOLDOWN_MINUTES of ANY sale.
+        2. Blacklist: Cannot buy if 2+ losses in last 24h.
+        """
+        trades = load_trades()
+        now = datetime.now()
+        
+        # Filter trades for this symbol
+        symbol_trades = [t for t in trades if t['symbol'] == symbol and t['status'] == 'CLOSED']
+        if not symbol_trades:
+            return True
+            
+        # Sort by exit time (newest first)
+        symbol_trades.sort(key=lambda x: x['exit_time'] if x['exit_time'] else '', reverse=True)
+        last_trade = symbol_trades[0]
+        
+        # 1. Check Cooldown
+        if last_trade['exit_time']:
+            last_exit_time = datetime.fromisoformat(last_trade['exit_time'])
+            minutes_since_exit = (now - last_exit_time).total_seconds() / 60
+            
+            if minutes_since_exit < COOLDOWN_MINUTES:
+                print(f"[ANALYZER] 🧊 COOLDOWN: Sold {symbol} {minutes_since_exit:.0f}m ago. Wait {COOLDOWN_MINUTES}m.")
+                return False
+                
+        # 2. Check Blacklist (Cursed Coin)
+        cutoff_time = now - timedelta(hours=BLACKLIST_DURATION_HOURS)
+        recent_losses = 0
+        
+        for trade in symbol_trades:
+            if not trade['exit_time']:
+                continue
+                
+            exit_time = datetime.fromisoformat(trade['exit_time'])
+            if exit_time < cutoff_time:
+                break # Trades are sorted, so we can stop
+                
+            if trade['pnl_pct'] < 0:
+                recent_losses += 1
+        
+        if recent_losses >= BLACKLIST_LOSSES:
+            print(f"[ANALYZER] ☠️ BLACKLIST: {symbol} has {recent_losses} losses in 24h. CURSED.")
+            return False
+            
+        return True
     
     def check_layer2_orderbook(self, symbol: str) -> tuple[bool, float]:
         """
@@ -519,6 +599,11 @@ class Analyzer:
         print('='*50)
         
         result = AnalysisResult(symbol=symbol, is_buy_signal=False)
+        
+        # V3: Check Cooldowns & Blacklists
+        if not self.check_trade_frequency_limits(symbol):
+            result.rejection_reason = "Cooldown / Blacklist active"
+            return result
         
         # V2: Get market regime for Chameleon Mode
         if CHAMELEON_MODE_ENABLED:
