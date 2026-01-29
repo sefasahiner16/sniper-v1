@@ -188,8 +188,8 @@ BULL_RSI_BREAKOUT = 55       # RSI must cross ABOVE this (momentum building)
 BULL_BREAKOUT_PERIOD = 20    # Price must be above N-period high
 
 # Bull Mode Targets (let winners run in trending markets)
-BULL_TAKE_PROFIT_ATR = 2.0   # Larger TP (trend continuation)
-BULL_STOP_LOSS_ATR = 0.8     # Tighter SL (trends are your friend)
+BULL_TAKE_PROFIT_ATR = 4.0   # Larger TP (trend continuation - 4x ATR)
+BULL_STOP_LOSS_ATR = 2.0     # Tighter SL (trends are your friend - 2x ATR)
 
 # =============================================================================
 # Logging
