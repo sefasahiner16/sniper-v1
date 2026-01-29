@@ -33,7 +33,8 @@ from config.settings import (
     # V4: Bull Mode settings
     BULL_MODE_ENABLED, BULL_RSI_BREAKOUT, BULL_BREAKOUT_PERIOD,
     BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR,
-    COOLDOWN_MINUTES, BLACKLIST_LOSSES, BLACKLIST_DURATION_HOURS
+    COOLDOWN_MINUTES, BLACKLIST_LOSSES, BLACKLIST_DURATION_HOURS,
+    MIN_STOP_LOSS_PCT
 )
 from modules.scanner import get_scanner
 from modules.indicators import analyze_technicals, get_atr_targets, calculate_rsi, calculate_highest_high
@@ -508,6 +509,14 @@ class Analyzer:
         
         tp_pct = ((take_profit - entry_price) / entry_price) * 100
         sl_pct = ((stop_loss - entry_price) / entry_price) * 100
+        
+        # V3: Minimum Stop Loss Floor (Safety)
+        # If ATR Stop is tighter than 1.5%, widen it to 1.5%.
+        # If ATR Stop is wider (e.g. 2.5%), keep it.
+        if abs(sl_pct) < MIN_STOP_LOSS_PCT:
+            print(f"[ANALYZER] 🛡️ Stop Loss Adjustment: Calculated {abs(sl_pct):.2f}% < {MIN_STOP_LOSS_PCT}%. Widening to {MIN_STOP_LOSS_PCT}%.")
+            sl_pct = -MIN_STOP_LOSS_PCT
+            stop_loss = entry_price * (1 + (sl_pct / 100))
         
         # V3: Minimum Profit Filter (Noise Reduction)
         if tp_pct < MIN_TARGET_PROFIT_PCT:

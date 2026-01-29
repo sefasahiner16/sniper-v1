@@ -122,6 +122,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward
 STOP_LOSS_ATR_MULTIPLIER = 2.0    # TARGET: ~2.0% risk (User Request: "Space to stretch")
+MIN_STOP_LOSS_PCT = 1.5           # SAFETY: Minimum SL distance (Prevent too tight stops)
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
