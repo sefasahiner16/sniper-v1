@@ -181,30 +181,46 @@ class Analyzer:
         # Filter trades for this symbol
         symbol_trades = [t for t in trades if t['symbol'] == symbol and t['status'] == 'CLOSED']
         if not symbol_trades:
+            # print(f"[ANALYZER] No previous trades for {symbol}. Cooldown check passed.")
+            return True
+            
+        # Helper to parse time safely
+        def parse_time(t_str):
+            if not t_str: return None
+            try:
+                return datetime.fromisoformat(t_str)
+            except ValueError:
+                return None
+
+        # Filter for valid exit times
+        valid_trades = []
+        for t in symbol_trades:
+            exit_time = parse_time(t.get('exit_time'))
+            if exit_time:
+                t['_exit_dt'] = exit_time # Store for sorting
+                valid_trades.append(t)
+        
+        if not valid_trades:
             return True
             
         # Sort by exit time (newest first)
-        symbol_trades.sort(key=lambda x: x['exit_time'] if x['exit_time'] else '', reverse=True)
-        last_trade = symbol_trades[0]
+        valid_trades.sort(key=lambda x: x['_exit_dt'], reverse=True)
+        last_trade = valid_trades[0]
         
         # 1. Check Cooldown
-        if last_trade['exit_time']:
-            last_exit_time = datetime.fromisoformat(last_trade['exit_time'])
-            minutes_since_exit = (now - last_exit_time).total_seconds() / 60
-            
-            if minutes_since_exit < COOLDOWN_MINUTES:
-                print(f"[ANALYZER] 🧊 COOLDOWN: Sold {symbol} {minutes_since_exit:.0f}m ago. Wait {COOLDOWN_MINUTES}m.")
-                return False
-                
+        last_exit_time = last_trade['_exit_dt']
+        minutes_since_exit = (now - last_exit_time).total_seconds() / 60
+        
+        if minutes_since_exit < COOLDOWN_MINUTES:
+            print(f"[ANALYZER] 🧊 COOLDOWN: {symbol} Sold {minutes_since_exit:.1f}m ago (Limit: {COOLDOWN_MINUTES}m). REJECTED.")
+            return False
+        
         # 2. Check Blacklist (Cursed Coin)
         cutoff_time = now - timedelta(hours=BLACKLIST_DURATION_HOURS)
         recent_losses = 0
         
-        for trade in symbol_trades:
-            if not trade['exit_time']:
-                continue
-                
-            exit_time = datetime.fromisoformat(trade['exit_time'])
+        for trade in valid_trades:
+            exit_time = trade['_exit_dt']
             if exit_time < cutoff_time:
                 break # Trades are sorted, so we can stop
                 
@@ -212,7 +228,7 @@ class Analyzer:
                 recent_losses += 1
         
         if recent_losses >= BLACKLIST_LOSSES:
-            print(f"[ANALYZER] ☠️ BLACKLIST: {symbol} has {recent_losses} losses in 24h. CURSED.")
+            print(f"[ANALYZER] ☠️ BLACKLIST: {symbol} has {recent_losses} losses in last {BLACKLIST_DURATION_HOURS}h. CURSED.")
             return False
             
         return True

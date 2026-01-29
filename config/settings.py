@@ -121,7 +121,7 @@ VOLUME_SPIKE_MULTIPLIER = 1.5  # Current volume must be this x average
 # =============================================================================
 ATR_PERIOD = 14
 TAKE_PROFIT_ATR_MULTIPLIER = 10.0  # UNLIMITED: 10x Reward
-STOP_LOSS_ATR_MULTIPLIER = 1.2    # TARGET: ~1.2% risk (User Request)
+STOP_LOSS_ATR_MULTIPLIER = 2.0    # TARGET: ~2.0% risk (User Request: "Space to stretch")
 
 # V3: Minimum Volatility Requirement (Noise Filter)
 # Reject trades if the calculated Take Profit is less than this %
@@ -135,8 +135,8 @@ BREAK_EVEN_TRIGGER_PCT = 1.0  # Move stop to BE when profit hits 1.0%
 BREAK_EVEN_TARGET_PCT = 0.1   # The BE target (Entry + 0.1% to cover fees)
 
 # Stage 2: Wide Trailing Stop
-TRAILING_STOP_ACTIVATION_PCT = 2.0  # Start trailing at 2.0% profit
-TRAILING_STOP_DISTANCE_PCT = 1.5    # WIDE: Trail by 1.5% (Allows volatility)
+TRAILING_STOP_ACTIVATION_PCT = 2.5  # Start trailing at 2.5% profit
+TRAILING_STOP_DISTANCE_PCT = 2.0    # WIDE: Trail by 2.0% (Allows volatility)
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True
