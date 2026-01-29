@@ -131,11 +131,11 @@ MIN_TARGET_PROFIT_PCT = 2.0
 # Position Management + V2 Dual-Stage Ratchet
 # =============================================================================
 # Stage 1: Break-Even
-BREAK_EVEN_TRIGGER_PCT = 1.0  # Move stop to BE when profit hits 1.0%
+BREAK_EVEN_TRIGGER_PCT = 0.8  # Move stop to BE when profit hits 0.8% (Hybrid: Safety + Fees)
 BREAK_EVEN_TARGET_PCT = 0.1   # The BE target (Entry + 0.1% to cover fees)
 
 # Stage 2: Wide Trailing Stop
-TRAILING_STOP_ACTIVATION_PCT = 2.5  # Start trailing at 2.5% profit
+TRAILING_STOP_ACTIVATION_PCT = 1.5  # Start trailing at 1.5% profit (Hybrid: Lock in earlier)
 TRAILING_STOP_DISTANCE_PCT = 2.0    # WIDE: Trail by 2.0% (Allows volatility)
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
