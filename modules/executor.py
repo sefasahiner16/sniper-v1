@@ -21,8 +21,7 @@ from config.settings import (
     BREAK_EVEN_TRIGGER_PCT, BREAK_EVEN_TARGET_PCT,
     TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, HARD_STOP_LOSS_PCT,
     MAX_CONSECUTIVE_LOSSES, CIRCUIT_BREAKER_HOURS,
-    RATCHET_TRAILING_STOP,
-    WEEKEND_MODE_ENABLED, WEEKEND_TIMEOUT_MINUTES
+    RATCHET_TRAILING_STOP, MAX_CONCURRENT_SLOTS
 )
 from utils.helpers import Timer, calculate_pnl_pct, is_weekend
 from modules.scanner import get_scanner
