@@ -38,6 +38,9 @@ class CapitalManager:
         """Initialize the capital manager."""
         self.last_vault_rebalance: Optional[datetime] = None
         self.paper_btc_balance: float = 0.0  # For paper trading simulation
+        
+        # V4: BTC Flash Crash Kill Switch
+        self.kill_switch_activated: Optional[datetime] = None  # When kill switch was triggered
     
     def calculate_slot_count(self, balance: float, max_slots_limit: int = MAX_CONCURRENT_SLOTS) -> int:
         """
@@ -251,6 +254,59 @@ class CapitalManager:
         minutes_until = (hours_until * 60) - current_min
         
         return True, minutes_until
+    
+    # =========================================================================
+    # V4: BTC Flash Crash Kill Switch
+    # =========================================================================
+    
+    def trigger_kill_switch(self):
+        """Activate the kill switch - pauses all trading."""
+        self.kill_switch_activated = datetime.now(timezone.utc)
+        print(f"[KILL SWITCH] 🚨 ACTIVATED! Trading paused for emergency.")
+    
+    def is_kill_switch_active(self) -> bool:
+        """
+        Check if kill switch is currently active.
+        
+        Returns:
+            True if trading should be paused due to kill switch
+        """
+        if self.kill_switch_activated is None:
+            return False
+        
+        from config.settings import BTC_CRASH_PAUSE_HOURS
+        
+        now = datetime.now(timezone.utc)
+        elapsed = now - self.kill_switch_activated
+        pause_duration = timedelta(hours=BTC_CRASH_PAUSE_HOURS)
+        
+        if elapsed >= pause_duration:
+            # Kill switch expired, reset it
+            print(f"[KILL SWITCH] ✅ Expired. Trading can resume.")
+            self.kill_switch_activated = None
+            return False
+        
+        return True
+    
+    def get_kill_switch_status(self) -> Tuple[bool, Optional[int]]:
+        """
+        Get kill switch status with time until resume.
+        
+        Returns:
+            Tuple of (is_active, minutes_until_resume)
+        """
+        if not self.is_kill_switch_active():
+            return False, None
+        
+        from config.settings import BTC_CRASH_PAUSE_HOURS
+        
+        now = datetime.now(timezone.utc)
+        elapsed = now - self.kill_switch_activated
+        pause_duration = timedelta(hours=BTC_CRASH_PAUSE_HOURS)
+        remaining = pause_duration - elapsed
+        minutes_remaining = int(remaining.total_seconds() / 60)
+        
+        return True, minutes_remaining
     
     # =========================================================================
     # The Vault (BTC Treasury)

@@ -79,10 +79,14 @@ ZOMBIE_VOLUME_RATIO = 0.3  # Min 24h volume / market cap ratio (Active Trading)
 # =============================================================================
 # Layer 1: BTC Sentiment + V2 Chameleon Mode
 # =============================================================================
-BTC_SENTIMENT_THRESHOLD = -0.5  # Abort if BTC drops more than this %
+BTC_SENTIMENT_THRESHOLD = -0.5  # Abort if BTC drops more than this % (15-min check)
 BTC_SMA_PERIOD = 50  # BTC SMA for market regime detection
 BTC_RSI_PERIOD = 14  # RSI period for BTC confirmation
 BTC_RSI_THRESHOLD = 50  # BTC RSI must be > this for Bull Mode
+
+# V4: BTC Flash Crash Kill Switch (1-Hour Pulse Check)
+BTC_CRASH_THRESHOLD = -3.0  # If BTC drops more than 3% in 1 hour, KILL SWITCH
+BTC_CRASH_PAUSE_HOURS = 2   # Pause trading for this many hours after kill switch
 
 # V2: Chameleon Mode - dynamic thresholds based on market regime
 CHAMELEON_MODE_ENABLED = True

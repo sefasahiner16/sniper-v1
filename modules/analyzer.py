@@ -34,9 +34,7 @@ from config.settings import (
     BULL_MODE_ENABLED, BULL_RSI_BREAKOUT, BULL_BREAKOUT_PERIOD,
     BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR,
     COOLDOWN_MINUTES, BLACKLIST_LOSSES, BLACKLIST_DURATION_HOURS,
-    MIN_STOP_LOSS_PCT,
-    # Weekend Mode
-    WEEKEND_MODE_ENABLED, WEEKEND_RSI_LIMIT
+    MIN_STOP_LOSS_PCT
 )
 from utils.helpers import is_weekend
 from modules.scanner import get_scanner
@@ -151,9 +149,32 @@ class Analyzer:
         """
         Layer 1: Check if BTC is not bleeding.
         
+        V4: Also checks 1-hour BTC change for flash crash detection.
+        
         Returns:
             Tuple of (passed, btc_change_pct)
         """
+        from modules.capital_manager import get_capital_manager
+        from config.settings import BTC_CRASH_THRESHOLD
+        
+        capital_manager = get_capital_manager()
+        
+        # V4: Check Kill Switch first
+        is_killed, minutes_left = capital_manager.get_kill_switch_status()
+        if is_killed:
+            print(f"[ANALYZER] Layer 1 ✗: KILL SWITCH ACTIVE ({minutes_left} mins remaining)")
+            return False, 0.0
+        
+        # V4: Check 1-hour BTC change for flash crash detection
+        btc_1h_change = self.scanner.get_btc_change(lookback_minutes=60)
+        if btc_1h_change is not None and btc_1h_change <= BTC_CRASH_THRESHOLD:
+            print(f"[ANALYZER] 🚨 BTC CRASH DETECTED: {btc_1h_change:.2f}% in 1 hour!")
+            capital_manager.trigger_kill_switch()
+            from utils.notifier import send_message
+            send_message(f"🚨 *KILL SWITCH ACTIVATED*\n\nBTC dropped {btc_1h_change:.2f}% in 1 hour.\nAll trading paused for 2 hours.")
+            return False, btc_1h_change
+        
+        # Original 15-min check
         btc_change = self.scanner.get_btc_change(lookback_minutes=15)
         
         if btc_change is None:
@@ -167,8 +188,6 @@ class Analyzer:
         else:
             print(f"[ANALYZER] Layer 1 ✗: BTC change {btc_change:.2f}% <= {BTC_SENTIMENT_THRESHOLD}% (market too risky)")
         
-        return passed, btc_change
-    
         return passed, btc_change
     
     def check_trade_frequency_limits(self, symbol: str) -> bool:
