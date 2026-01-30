@@ -5,7 +5,7 @@ Common utility functions used across modules.
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Optional
 
 
@@ -57,6 +57,17 @@ def retry_on_exception(func, max_retries: int = 3, delay: float = 1.0):
                     time.sleep(delay * (attempt + 1))  # Exponential backoff
         raise last_exception
     return wrapper
+
+
+def is_weekend() -> bool:
+    """Check if current time is Weekend (Friday 12:00 PM+ to Sunday end)."""
+    # Use local time (Friday 12pm) as per user request
+    now = datetime.now()
+    # 4 = Friday, 5 = Saturday, 6 = Sunday
+    if now.weekday() == 4:
+        return now.hour >= 12
+    return now.weekday() >= 5
+
 
 
 def safe_divide(numerator: float, denominator: float, default: float = 0.0) -> float:

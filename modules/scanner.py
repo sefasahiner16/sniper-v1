@@ -19,8 +19,10 @@ from config.settings import (
     WATCHLIST_SIZE,
     ZOMBIE_FILTER_ENABLED, ZOMBIE_VOLUME_RATIO,
     CHAMELEON_MODE_ENABLED, BTC_SMA_PERIOD,
-    BTC_RSI_PERIOD, BTC_RSI_THRESHOLD
+    BTC_RSI_PERIOD, BTC_RSI_THRESHOLD,
+    STRATEGY_MAP
 )
+from utils.helpers import is_weekend
 
 
 class Scanner:
@@ -161,11 +163,19 @@ class Scanner:
         print(f"[SCANNER] Found {len(tickers)} total tickers")
         
         # Apply filters
+        # Apply filters
         usdt_pairs = self.filter_usdt_pairs(tickers)
         print(f"[SCANNER] {len(usdt_pairs)} USDT pairs")
         
-        volume_filtered = self.filter_by_volume(usdt_pairs)
-        print(f"[SCANNER] {len(volume_filtered)} meet volume requirement (>${MIN_24H_VOLUME_USDT:,.0f})")
+        # V4: Dynamic Strategy Volume Filter
+        strategy = self.get_active_strategy()
+        min_volume = strategy.get('min_volume', 2000000)
+        strategy_name = strategy.get('name', 'UNKNOWN')
+        
+        print(f"[SCANNER] 🧠 Strategy: {strategy_name} | Min Volume: ${min_volume:,.0f}")
+        
+        volume_filtered = self.filter_by_volume(usdt_pairs, min_volume=min_volume)
+        print(f"[SCANNER] {len(volume_filtered)} meet volume requirement")
         
         price_filtered = self.filter_by_price_change(volume_filtered)
         print(f"[SCANNER] {len(price_filtered)} in target volatility range ({MIN_PRICE_CHANGE_PCT}% to {MAX_PRICE_CHANGE_PCT}%)")
@@ -479,6 +489,40 @@ class Scanner:
         except Exception as e:
             print(f"[SCANNER] Error detecting market regime: {e}")
             return "UNKNOWN", None, None
+
+    def get_active_strategy(self) -> dict:
+        """
+        Determine the active trading strategy based on market regime and day.
+        
+        Returns:
+            Dictionary with strategy configuration (min_volume, rsi_limit, etc.)
+        """
+        # 1. Get Regime (BULL / BEAR)
+        regime, _, _ = self.get_market_regime()
+        is_bull = (regime == "BULL")
+        
+        # 2. Get Day (WEEKEND / WEEKDAY)
+        is_weekend_now = is_weekend()
+        
+        # 3. Select Strategy
+        if is_bull:
+            if is_weekend_now:
+                strategy_name = "BULL_WEEKEND"
+            else:
+                strategy_name = "BULL_WEEKDAY"
+        else:
+            if is_weekend_now:
+                strategy_name = "BEAR_WEEKEND"
+            else:
+                strategy_name = "BEAR_WEEKDAY"
+        
+        config = STRATEGY_MAP.get(strategy_name, STRATEGY_MAP["BEAR_WEEKDAY"])
+        
+        # Add strategy name to config for logging
+        config_with_name = config.copy()
+        config_with_name['name'] = strategy_name
+        
+        return config_with_name
 
     # =========================================================================
     # V3: Server-Side Orders (Limit & Stop Loss)

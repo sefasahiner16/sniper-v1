@@ -39,26 +39,25 @@ class CapitalManager:
         self.last_vault_rebalance: Optional[datetime] = None
         self.paper_btc_balance: float = 0.0  # For paper trading simulation
     
-    def calculate_slot_count(self, balance: float) -> int:
+    def calculate_slot_count(self, balance: float, max_slots_limit: int = MAX_CONCURRENT_SLOTS) -> int:
         """
-        Calculate number of slots based on balance.
-        
-        Auto-Scaling Logic: Active Slots = Total Balance / Base Trade Size
-        
-        Args:
-            balance: Available USDT balance
-            
-        Returns:
-            Number of slots to run
+        Calculate number of slots based on available balance.
+        Rules:
+        - Min 1 slot
+        - Add 1 slot for every BASE_TRADE_SIZE ($6) increment
+        - Cap at MAX_CONCURRENT_SLOTS (20) or strategy limit (e.g. 10 in Bunker)
         """
         if balance < MIN_SLOT_SIZE:
-            return 0
+             return 0 # Can't trade if < $6
+             
+        # Example: Balance $12, Base $6 -> 2 slots
+        # Example: Balance $50, Base $6 -> 8 slots
+        # Example: Balance $200, Base $6 -> 33 slots -> Capped at 20
+        slots = int(balance / BASE_TRADE_SIZE)
         
-        # Calculate ideal slot count
-        slot_count = int(balance / BASE_TRADE_SIZE)
-        
-        # Clamp to limits
-        slot_count = max(1, min(slot_count, MAX_CONCURRENT_SLOTS))
+        # Cap at limits (Strategy-defined limit takes precedence if lower)
+        effective_limit = min(MAX_CONCURRENT_SLOTS, max_slots_limit)
+        slot_count = max(1, min(slots, effective_limit))
         
         return slot_count
     
@@ -66,45 +65,83 @@ class CapitalManager:
         self, 
         balance: float, 
         active_slots: int,
-        queue_depth: int = 0
+        queue_depth: int = 0,
+        max_slots_limit: int = MAX_CONCURRENT_SLOTS
     ) -> float:
         """
         Calculate capital per slot with elastic sizing.
         
-        Elastic Slot Sizing (Bull Mode):
-        - If queue is full of opportunities but funds are tight,
-          reduce capital per slot to catch more opportunities.
-        
         Args:
             balance: Available USDT balance
-            active_slots: Number of currently active slots
-            queue_depth: Number of opportunities waiting in queue
+            active_slots: Number of active slots
+            queue_depth: Not heavily used in V4, kept for compat.
+            max_slots_limit: Dynamic limit from strategy.
             
         Returns:
             Capital to allocate per slot
         """
-        available_slots = self.calculate_slot_count(balance) - active_slots
+        # 1. Determine Total Slots active/planned
+        # If we have $120, BASE=$6 -> 20 slots.
+        # If we have $12,000 -> 20 slots (max).
+        total_slots = self.calculate_slot_count(balance, max_slots_limit)
         
-        if available_slots <= 0:
+        # 2. How many slots can we open now?
+        available_open_slots = total_slots - active_slots
+        if available_open_slots <= 0:
             return 0.0
+            
+        # 3. Calculate raw slot size
+        # We divide the TOTAL balance by TOTAL slots to keep sizing consistent.
+        # Any excess beyond (20 * 500) remains unallocated (Virtual Vault).
         
-        # Base slot size
-        slot_size = balance / available_slots
+        # We need to be careful: 'balance' here is supposedly AVAILABLE balance.
+        # If we have positions open, 'balance' is reduced.
+        # But 'active_slots' accounts for that.
+        # Wait. calculate_slot_count uses 'balance'. If 'balance' is only FREE balance,
+        # then as we fill slots, 'balance' drops, so calculate_slot_count drops?
+        # That's a BUG in V3 logic if passed pure free balance.
+        # Usually we pass (free + locked) or logic handles it.
+        # Let's assume 'balance' passed here is FREE USDT.
         
-        # Bull Mode: If queue has many opportunities, reduce slot size
-        # to diversify across more trades
-        if queue_depth > available_slots and queue_depth > 0:
-            # Reduce slot size to allow more concurrent trades
-            # but never below minimum
-            elasticity_factor = available_slots / queue_depth
-            slot_size = max(MIN_SLOT_SIZE, slot_size * elasticity_factor)
+        # CORRECT LOGIC V4:
+        # We want Equal Weighting.
+        # If Total Capital is $1000 -> 20 Slots of $50.
+        # If we used 5 slots ($250), we have $750 left.
+        # calculate_slot_count($750) -> 125 slots? NO.
         
-        # Enforce Whale Cap
-        slot_size = min(slot_size, WHALE_CAP)
+        # We need Total Equity to calculate Total Slots ideally.
+        # But lacking that, let's use a simpler heuristic for safe growth:
+        # Use simple division of Available Balance / Remaining Slots?
         
-        # Enforce minimum
+        # If we want to strictly follow "Max 20 Slots", we need to know how many we WANT.
+        # If we have $12k total, we want 20 slots of $500.
+        
+        # Let's use the 'balance' as Free Balance.
+        # Remaining Slots = 20 - active_slots.
+        # Slot Size = Free Balance / Remaining Slots.
+        # Cap at $500.
+        
+        # But 'total_slots' calculation above depends on balance.
+        # If balance is small, total_slots is small.
+        # If balance is free balance, this logic works for scaling *up*.
+        
+        remaining_slots_capacity = max_slots_limit - active_slots
+        if remaining_slots_capacity <= 0:
+             return 0.0
+             
+        raw_size = balance / remaining_slots_capacity
+        
+        # 4. Enforce Limits
+        # Cap at WHALE_CAP ($500)
+        slot_size = min(raw_size, WHALE_CAP)
+        
+        # Floor at MIN_SLOT_SIZE ($6)
         if slot_size < MIN_SLOT_SIZE:
-            return 0.0
+             # Try to squeeze at least one slot?
+             if balance >= MIN_SLOT_SIZE:
+                 slot_size = MIN_SLOT_SIZE
+             else:
+                 return 0.0
         
         return slot_size
     
@@ -112,7 +149,8 @@ class CapitalManager:
         self, 
         balance: float, 
         active_slots: int = 0,
-        queue_depth: int = 0
+        queue_depth: int = 0,
+        max_slots_limit: int = MAX_CONCURRENT_SLOTS
     ) -> CapitalAllocation:
         """
         Get full capital allocation recommendation.
@@ -121,13 +159,11 @@ class CapitalManager:
             balance: Available USDT balance
             active_slots: Currently active slot count
             queue_depth: Opportunities in queue
-            
-        Returns:
-            CapitalAllocation with slot count, size, and totals
+            max_slots_limit: Dynamic limit from strategy
         """
-        slot_count = self.calculate_slot_count(balance)
+        slot_count = self.calculate_slot_count(balance, max_slots_limit)
         available_slots = max(0, slot_count - active_slots)
-        slot_size = self.calculate_slot_size(balance, active_slots, queue_depth)
+        slot_size = self.calculate_slot_size(balance, active_slots, queue_depth, max_slots_limit)
         
         total_allocated = available_slots * slot_size
         reserve = balance - total_allocated
@@ -250,8 +286,8 @@ class CapitalManager:
         Determine what vault action to take.
         
         Logic:
-        - OVERFLOW: If USDT > Operational Cap * Overflow Multiplier → Buy BTC
-        - CRITICAL: If USDT < Operational Cap * Critical Level → Sell BTC
+        - OVERFLOW: If USDT > Operational Cap * Overflow Multiplier -> Buy BTC
+        - CRITICAL: If USDT < Operational Cap * Critical Level -> Sell BTC
         - NONE: Otherwise
         
         Args:
@@ -327,6 +363,7 @@ class CapitalManager:
 
 # Singleton instance
 _capital_manager_instance = None
+
 
 def get_capital_manager() -> CapitalManager:
     """Get the global capital manager instance."""

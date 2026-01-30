@@ -34,8 +34,11 @@ from config.settings import (
     BULL_MODE_ENABLED, BULL_RSI_BREAKOUT, BULL_BREAKOUT_PERIOD,
     BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR,
     COOLDOWN_MINUTES, BLACKLIST_LOSSES, BLACKLIST_DURATION_HOURS,
-    MIN_STOP_LOSS_PCT
+    MIN_STOP_LOSS_PCT,
+    # Weekend Mode
+    WEEKEND_MODE_ENABLED, WEEKEND_RSI_LIMIT
 )
+from utils.helpers import is_weekend
 from modules.scanner import get_scanner
 from modules.indicators import analyze_technicals, get_atr_targets, calculate_rsi, calculate_highest_high
 from utils.logger import load_trades
@@ -270,7 +273,8 @@ class Analyzer:
     def check_layer3_technical(
         self, 
         df: pd.DataFrame, 
-        market_regime: str = "UNKNOWN"
+        market_regime: str = "UNKNOWN",
+        rsi_limit_override: Optional[float] = None
     ) -> Tuple[bool, dict, bool, float]:
         """
         Layer 3: Check RSI + Bollinger Bands confluence.
@@ -279,9 +283,13 @@ class Analyzer:
         - RSI Hook: Buy when RSI crosses BACK above threshold (not while falling)
         - Chameleon Mode: Dynamic RSI threshold based on market regime
         
+        V4 Enhancement:
+        - rsi_limit_override: Force a specific RSI threshold (from STRATEGY_MAP)
+        
         Args:
             df: OHLCV DataFrame
             market_regime: Current market regime (BULL, BEAR, UNKNOWN)
+            rsi_limit_override: Optional override for RSI threshold
             
         Returns:
             Tuple of (passed, technicals_dict, rsi_hook_triggered, effective_threshold)
@@ -300,8 +308,12 @@ class Analyzer:
             print("[ANALYZER] Layer 3: Missing indicator data")
             return False, technicals, False, RSI_OVERSOLD
         
-        # V2: Chameleon Mode - adjust RSI threshold based on market regime
-        if CHAMELEON_MODE_ENABLED:
+        # Calculate Effective Threshold
+        if rsi_limit_override is not None:
+             # V4: Use the Strategy's RSI Limit directly
+            rsi_threshold = rsi_limit_override
+            # print(f"[ANALYZER] 🔧 Using Strategy RSI Limit: {rsi_threshold}")
+        elif CHAMELEON_MODE_ENABLED:
             if market_regime == "BULL":
                 rsi_threshold = RSI_BULL_THRESHOLD
             elif market_regime == "BEAR":
@@ -310,13 +322,17 @@ class Analyzer:
                 rsi_threshold = RSI_OVERSOLD
         else:
             rsi_threshold = RSI_OVERSOLD
+
+        # V4: Weekend Mode Override - Deprecated in favor of STRATEGY_MAP, but kept locally if check fails
+        # The calling function should handle strategy selection.
+        # We removed the direct WEEKEND_MODE check here.
         
         # V2: RSI Hook - check if RSI is crossing BACK above threshold
         rsi_hook_triggered = False
         rsi_prev = None
         
         if RSI_HOOK_ENABLED:
-            # Calculate previous RSI from the dataframe
+            # Calculate power from the dataframe? No, using stored method.
             from modules.indicators import calculate_rsi
             rsi_series = calculate_rsi(df)
             
@@ -325,43 +341,67 @@ class Analyzer:
                 
                 if rsi_prev is not None:
                     # RSI Hook: was below threshold, now at or above
-                    rsi_hook_triggered = (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD)
+                    # Wait, Hook is meaningful relative to the threshold?
+                    # Or just general Hook (curling up)?
+                    # Usually Hook means crossing a specific level OR just local minima reversal.
+                    # Current logic: Was < 30, Now >= 30.
+                    # We should align this '30' with the 'rsi_threshold'.
                     
-                    if rsi_hook_triggered:
-                        print(f"[ANALYZER] 🪝 RSI Hook triggered: {rsi_prev:.1f} → {rsi:.1f}")
+                    # Enhanced Hook: Check if we are hooking up from below the *Dynamic Threshold*
+                    # This makes the Hook dynamic too!
+                    rsi_hook_triggered = (rsi_prev < rsi_threshold) and (rsi >= rsi_prev) 
+                    # Wait, Hook is usually reversal. 
+                    # Original code: (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD).
+                    # RSI_HOOK_THRESHOLD was 30.
+                    
+                    # If we change limit to 40 (Bull/Rally), catching a hook at 39->41 is valid.
+                    # So we should use rsi_threshold for the hook level?
+                    # Yes, strategy alignment.
+                    
+                    # But wait, original code used RSI_HOOK_THRESHOLD constant.
+                    # If I change it to use rsi_threshold, I change behavior significantly.
+                    # Let's stick to the threshold logic:
+                    # If RSI < Limit, we are good.
+                    # Hook is an *alternative* or *confirmation*.
+                    
+                    # For now, I will keep Hook independent or loose.
+                    # Let's keep existing Hook check but maybe log it?
+                    # Actually, let's just stick to the constant `RSI_HOOK_THRESHOLD` (30) for the *Hook* specific event, 
+                    # BUT `rsi_threshold` (Dynamic) for the Level check.
+                    
+                    # Original logic was:
+                    # rsi_hook_triggered = (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD)
+                    pass
+                    
+        # ... (rest of function) ... logic needs to be careful with indentation/return
         
-        # Store previous RSI in technicals for result
+        # To avoid complex partial replacement issues with indentation, 
+        # I will just invoke the rest of the logic or rely on the tool to replace the block.
+        # But I need to provide the *whole* block up to return to be safe, 
+        # or rewrite the logic part.
+        
+        # Let's rewrite the logic part clearly.
+        
+        if RSI_HOOK_ENABLED and isinstance(rsi_prev, float): # safer check
+             rsi_hook_triggered = (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD)
+             if rsi_hook_triggered:
+                 print(f"[ANALYZER] 🪝 RSI Hook triggered: {rsi_prev:.1f} → {rsi:.1f}")
+
         technicals['rsi_prev'] = rsi_prev
         
-        # Check conditions
-        # V3: Relaxed BB condition (allow 0.5% tolerance above lower band)
         bb_tolerance_multiplier = 1.005
         below_bb = close <= (bb_lower * bb_tolerance_multiplier)
         
-        # V3 STRICT MODE: Require Hook if enabled
+        # Logic Matrix
         if RSI_HOOK_STRICT:
+            passed = rsi_hook_triggered
+        else:
+            # Loose Mode:
+            # Pass if Hook Triggered OR (RSI < Threshold AND Below BB)
             if rsi_hook_triggered:
                 passed = True
-                print(f"[ANALYZER] Layer 3 ✓: RSI Hook triggered (STRICT MODE)")
             else:
-                passed = False
-                print(f"[ANALYZER] Layer 3 ✗: Hook NOT triggered (STRICT MODE active)")
-        else:
-            # V2 Loose Mode: Accept if RSI Hook triggered OR traditional oversold
-            if RSI_HOOK_ENABLED:
-                # RSI Hook mode:
-                # 1. Hook triggered (strong reversal) -> Ignore BB condition
-                # 2. Just oversold (knife catching) -> Must be below BB (with tolerance)
-                if rsi_hook_triggered:
-                    passed = True
-                    rsi_condition = True
-                else:
-                    rsi_condition = rsi < rsi_threshold
-                    passed = rsi_condition and below_bb
-            else:
-                # Traditional mode
-                rsi_condition = rsi < rsi_threshold
-                passed = rsi_condition and below_bb
+                passed = (rsi < rsi_threshold) and below_bb
         
         if passed:
             hook_str = " (RSI Hook ✓)" if rsi_hook_triggered else ""
@@ -369,16 +409,12 @@ class Analyzer:
         else:
             reasons = []
             if RSI_HOOK_STRICT:
-                reasons.append("STRICT MODE: RSI Hook required but not triggered")
+                reasons.append("STRICT MODE: RSI Hook required")
             else:
-                if not rsi_condition:
-                    if RSI_HOOK_ENABLED:
-                        rsi_prev_str = f"{rsi_prev:.1f}" if rsi_prev is not None else 'N/A'
-                        reasons.append(f"RSI {rsi:.1f} not hooking (prev: {rsi_prev_str})")
-                    else:
-                        reasons.append(f"RSI {rsi:.1f} >= {rsi_threshold}")
+                if not (rsi < rsi_threshold):
+                     reasons.append(f"RSI {rsi:.1f} >= {rsi_threshold}")
                 if not below_bb and not rsi_hook_triggered:
-                    reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f} (incl. tolerance)")
+                     reasons.append(f"Price {close:.6f} > BB Lower {bb_lower:.6f}")
             print(f"[ANALYZER] Layer 3 ✗: {', '.join(reasons)}")
         
         return passed, technicals, rsi_hook_triggered, rsi_threshold
@@ -490,13 +526,15 @@ class Analyzer:
         
         return passed, ratio
     
-    def calculate_layer5_targets(self, entry_price: float, atr: float) -> tuple[float, float]:
+    # V4: Dynamic SL based on strategy (passed as min_stop_loss_pct_override)
+    def calculate_layer5_targets(self, entry_price: float, atr: float, min_stop_loss_pct_override: Optional[float] = None) -> Tuple[float, float]:
         """
         Layer 5: Calculate ATR-based take profit and stop loss.
         
         Args:
             entry_price: Expected entry price
             atr: Current ATR value
+            min_stop_loss_pct_override: Optional override for minimum stop loss percentage
             
         Returns:
             Tuple of (take_profit, stop_loss)
@@ -510,12 +548,15 @@ class Analyzer:
         tp_pct = ((take_profit - entry_price) / entry_price) * 100
         sl_pct = ((stop_loss - entry_price) / entry_price) * 100
         
+        # V4: Use override or default constant
+        min_sl_pct = min_stop_loss_pct_override if min_stop_loss_pct_override is not None else MIN_STOP_LOSS_PCT
+        
         # V3: Minimum Stop Loss Floor (Safety)
-        # If ATR Stop is tighter than 1.5%, widen it to 1.5%.
+        # If ATR Stop is tighter than limit, widen it.
         # If ATR Stop is wider (e.g. 2.5%), keep it.
-        if abs(sl_pct) < MIN_STOP_LOSS_PCT:
-            print(f"[ANALYZER] 🛡️ Stop Loss Adjustment: Calculated {abs(sl_pct):.2f}% < {MIN_STOP_LOSS_PCT}%. Widening to {MIN_STOP_LOSS_PCT}%.")
-            sl_pct = -MIN_STOP_LOSS_PCT
+        if abs(sl_pct) < min_sl_pct:
+            # print(f"[ANALYZER] 🛡️ Stop Loss Adjustment: Calculated {abs(sl_pct):.2f}% < {min_sl_pct}%. Widening to {min_sl_pct}%.")
+            sl_pct = -min_sl_pct
             stop_loss = entry_price * (1 + (sl_pct / 100))
         
         # V3: Minimum Profit Filter (Noise Reduction)
@@ -620,8 +661,18 @@ class Analyzer:
             AnalysisResult with all layer results and targets
         """
         print(f"\n{'='*50}")
-        print(f"[ANALYZER] Starting V3 analysis for {symbol}")
+        print(f"[ANALYZER] Starting V4 analysis for {symbol}")
         print('='*50)
+        
+        # V4: Dynamic Strategy Configuration
+        strategy = self.scanner.get_active_strategy()
+        market_regime = "BULL" if "BULL" in strategy['name'] else "BEAR"
+        
+        # Extract Strategy Settings
+        rsi_limit = strategy.get('rsi_limit', 32)
+        min_stop_loss_pct = strategy.get('min_stop_loss_pct', 1.5)
+        
+        print(f"[ANALYZER] 🧠 Strategy: {strategy['name']} | RSI Limit: {rsi_limit} | Min SL: {min_stop_loss_pct}%")
         
         result = AnalysisResult(symbol=symbol, is_buy_signal=False)
         
@@ -682,102 +733,61 @@ class Analyzer:
         result.price = df['close'].iloc[-1]
         result.atr = technicals.get('atr')
         
-        # V4: Branch into Bull Mode or Bear Mode based on market regime
-        use_bull_mode = BULL_MODE_ENABLED and result.market_regime == "BULL"
         
-        if use_bull_mode:
-            # =========================================================
-            # BULL MODE: Trend-Following Strategy
-            # =========================================================
-            result.bull_mode_active = True
-            print(f"[ANALYZER] 🐂 BULL MODE ACTIVE - Using trend-following strategy")
-            
-            # Layer 3 (Bull): RSI Breakout + Price Breakout
-            layer3_ok, technicals_updated, rsi_breakout_ok, price_breakout_ok = self.check_layer3_bull_technical(df)
-            result.layer3_technical_ok = layer3_ok
-            result.rsi = technicals_updated.get('rsi')
-            result.rsi_prev = technicals_updated.get('rsi_prev')
-            result.rsi_breakout_ok = rsi_breakout_ok
-            result.price_breakout_ok = price_breakout_ok
-            result.highest_high = technicals_updated.get('highest_high')
-            result.effective_rsi_threshold = BULL_RSI_BREAKOUT
-            
-            if not layer3_ok:
-                result.rejection_reason = "Bull Layer 3: Breakout conditions not met"
-                return result
-            
-            # Layer 4: Volume Validation (same as Bear Mode)
-            layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
-            result.layer4_volume_ok = layer4_ok
-            result.volume_ratio = volume_ratio
-            
-            if not layer4_ok:
-                result.rejection_reason = "Layer 4: Volume too low"
-                return result
-            
-            # Skip Multi-TF check for Bull Mode (trend confirmation is done via price breakout)
-            result.multi_tf_ok = True
-            
-            # Layer 5 (Bull): ATR Targets with Bull Mode multipliers
-            if result.price and result.atr:
-                take_profit, stop_loss = get_atr_targets(
-                    result.price, result.atr,
-                    tp_multiplier=BULL_TAKE_PROFIT_ATR,
-                    sl_multiplier=BULL_STOP_LOSS_ATR
-                )
-                
-                tp_pct = ((take_profit - result.price) / result.price) * 100
-                sl_pct = ((stop_loss - result.price) / result.price) * 100
-                
-                if tp_pct < MIN_TARGET_PROFIT_PCT:
-                    result.rejection_reason = f"Bull Layer 5: Profit potential {tp_pct:.2f}% too low"
-                    return result
-                
-                result.take_profit = take_profit
-                result.stop_loss = stop_loss
-                result.layer5_targets_set = True
-                print(f"[ANALYZER] Bull Layer 5 ✓: TP ${take_profit:.6f} (+{tp_pct:.2f}%), SL ${stop_loss:.6f} ({sl_pct:.2f}%)")
-            else:
-                result.rejection_reason = "Bull Layer 5: Could not calculate targets"
-                return result
-            
-            # All layers passed in Bull Mode!
-            result.is_buy_signal = True
-            
-            extras = ["BULL MODE", "RSI Breakout", "Price Breakout"]
-            extras_str = " + ".join(extras)
-            print(f"\n🚀 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL [BULL MODE] {extras_str} for {symbol}")
-            
-        else:
-            # =========================================================
-            # BEAR MODE: Mean-Reversion Strategy (Original V3 Logic)
-            # =========================================================
-            print(f"[ANALYZER] 🐻 BEAR MODE - Using mean-reversion strategy")
-            
-            # Layer 3: Technical Confluence (V2: with RSI Hook and Chameleon Mode)
-            layer3_ok, technicals_updated, rsi_hook_triggered, effective_threshold = self.check_layer3_technical(
-                df, 
-                market_regime=result.market_regime
-            )
-            result.layer3_technical_ok = layer3_ok
-            result.rsi = technicals_updated.get('rsi')
-            result.rsi_prev = technicals_updated.get('rsi_prev')
-            result.bb_lower = technicals_updated.get('bb_lower')
-            result.rsi_hook_ok = rsi_hook_triggered
-            result.effective_rsi_threshold = effective_threshold
-            
-            if not layer3_ok:
-                result.rejection_reason = "Layer 3: Technical conditions not met"
-                return result
-            
-            # Layer 4: Volume Validation
-            layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
-            result.layer4_volume_ok = layer4_ok
-            result.volume_ratio = volume_ratio
-            
-            if not layer4_ok:
-                result.rejection_reason = "Layer 4: Volume too low"
-                return result
+        if result.atr:
+            result.atr_stop_loss_pct = (result.atr * STOP_LOSS_ATR_MULTIPLIER / result.price) * 100
+        
+        # =========================================================
+        # V4: Unified Strategy Logic (Sniper, Bunker, Rally, Volatility)
+        # =========================================================
+        # We use the standard 5-Layer approach but with DYNAMIC thresholds
+        # passed from the active strategy.
+        
+        # Layer 3: Technical Confluence (RSI + BB + Hook)
+        
+        # V4 Override: Use strategy.rsi_limit instead of constants
+        effective_rsi_threshold = rsi_limit
+        
+        # Pass dynamic threshold to check_layer3
+        # Note: check_layer3_technical usually uses constants. 
+        # We will modify it to accept an override OR we just do the check here manually?
+        # Cleaner to modify check_layer3_technical signature? 
+        # Or just patch the constant? No.
+        # Let's check check_layer3_technical again. It accepts 'market_regime' but uses global constants.
+        
+        # Actually, let's just inline the check or update check_layer3_technical.
+        # Updating check_layer3_technical is better.
+        # But for now, let's call it and then OVERRIDE the result if needed?
+        # No, check_layer3 returns passed/failed based on constants.
+        
+        # START MODIFICATION: We will update check_layer3_technical signature in a moment.
+        # For this chunk, I will assume check_layer3_technical takes an optional 'rsi_limit_override'.
+        
+        layer3_ok, technicals_updated, rsi_hook_triggered, used_threshold = self.check_layer3_technical(
+            df, 
+            market_regime=result.market_regime,
+            rsi_limit_override=rsi_limit
+        )
+        
+        result.layer3_technical_ok = layer3_ok
+        result.rsi = technicals_updated.get('rsi')
+        result.rsi_prev = technicals_updated.get('rsi_prev')
+        result.bb_lower = technicals_updated.get('bb_lower')
+        result.rsi_hook_ok = rsi_hook_triggered
+        result.effective_rsi_threshold = used_threshold
+        
+        if not layer3_ok:
+            result.rejection_reason = f"Layer 3: Technicals (RSI {result.rsi:.1f} >= {used_threshold})"
+            return result
+        
+        # Layer 4: Volume Validation
+        layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
+        result.layer4_volume_ok = layer4_ok
+        result.volume_ratio = volume_ratio
+        
+        if not layer4_ok:
+            result.rejection_reason = "Layer 4: Volume too low"
+            return result
             
             # V3: Check volume capitulation
             is_capitulation, cap_ratio = self.check_capitulation(technicals)
@@ -795,7 +805,10 @@ class Analyzer:
             
             # Layer 5: ATR Targets
             if result.price and result.atr:
-                take_profit, stop_loss = self.calculate_layer5_targets(result.price, result.atr)
+                take_profit, stop_loss = self.calculate_layer5_targets(
+                    result.price, result.atr,
+                    min_stop_loss_pct_override=min_stop_loss_pct
+                )
                 
                 # V3: Check if targets are valid (non-zero)
                 if take_profit == 0 or stop_loss == 0:

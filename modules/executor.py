@@ -21,8 +21,10 @@ from config.settings import (
     BREAK_EVEN_TRIGGER_PCT, BREAK_EVEN_TARGET_PCT,
     TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, HARD_STOP_LOSS_PCT,
     MAX_CONSECUTIVE_LOSSES, CIRCUIT_BREAKER_HOURS,
-    RATCHET_TRAILING_STOP
+    RATCHET_TRAILING_STOP,
+    WEEKEND_MODE_ENABLED, WEEKEND_TIMEOUT_MINUTES
 )
+from utils.helpers import Timer, calculate_pnl_pct, is_weekend
 from modules.scanner import get_scanner
 from modules.analyzer import AnalysisResult
 from modules.capital_manager import get_capital_manager
@@ -367,7 +369,12 @@ class Executor:
         if current_price <= pos.stop_loss: return "SL_HIT"
         if pos.trailing_activated and pos.trailing_stop and current_price <= pos.trailing_stop: return "TRAILING_STOP"
         
-        if pos.timer.has_exceeded(TIME_EXIT_MINUTES):
+        # V4: Dynamic Strategy Timeout Override
+        # Fetch current strategy config to get the correct timeout
+        strategy = self.scanner.get_active_strategy()
+        timeout_minutes = strategy.get('timeout_minutes', TIME_EXIT_MINUTES)
+        
+        if pos.timer.has_exceeded(timeout_minutes):
             if pnl_pct < TIME_EXIT_MIN_PROFIT_PCT: return "TIME_EXIT"
         
         if pnl_pct <= -HARD_STOP_LOSS_PCT: return "SL_HIT"

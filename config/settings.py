@@ -38,19 +38,19 @@ INITIAL_BALANCE = 12.0  # Starting balance for paper trading (USD)
 # =============================================================================
 # V2: Dynamic Capital Management
 # =============================================================================
-BASE_TRADE_SIZE = 5.0  # Base $ per slot for auto-scaling
+BASE_TRADE_SIZE = 6.0  # Base $ per slot for auto-scaling ($6 min)
 WHALE_CAP = 500.0  # Maximum $ per single trade (prevents slippage)
-MIN_SLOT_SIZE = 1.0  # Minimum $ per trade (exchange minimum)
-MAX_CONCURRENT_SLOTS = 3  # V3: 3 simultaneous positions
+MIN_SLOT_SIZE = 6.0  # Minimum $ per trade (exchange minimum ~5)
+MAX_CONCURRENT_SLOTS = 20  # V4: 20 simultaneous positions (User request)
 
 # =============================================================================
 # V2: The Vault (BTC Treasury)
 # =============================================================================
 VAULT_ENABLED = True  # Enable automatic BTC treasury management
-VAULT_OVERFLOW_MULTIPLIER = 2.0  # Buy BTC when balance > operational_cap * this
-VAULT_CRITICAL_LEVEL = 0.3  # Sell BTC when balance < operational_cap * this
-VAULT_REBALANCE_HOUR_UTC = 2  # Daily vault rebalance hour (02:00 UTC)
-OPERATIONAL_CAP = 100.0  # Target operational USDT balance
+VAULT_OVERFLOW_MULTIPLIER = 1.0  # Buy BTC when balance > operational_cap
+VAULT_CRITICAL_LEVEL = 0.5  # Sell BTC when balance < operational_cap * this
+VAULT_REBALANCE_HOUR_UTC = 0  # Daily vault rebalance hour (00:00 UTC)
+OPERATIONAL_CAP = 10000.0  # Target operational USDT balance (20 slots * $500)
 
 # =============================================================================
 # V2: Dead Hours (Shift System)
@@ -182,7 +182,7 @@ CAPITULATION_BONUS_SCORE = 0.5  # Extra score for capitulation + RSI Hook
 # V4: Bull Mode (Trend-Following Strategy)
 # =============================================================================
 # When market is BULL (BTC > SMA50), switch from mean-reversion to trend-following
-BULL_MODE_ENABLED = True  # Enable trend-following in bull markets
+BULL_MODE_ENABLED = False  # DISABLED: Using STRATEGY_MAP logic instead (Rally Mode)
 
 # Bull Mode Entry Conditions
 BULL_RSI_BREAKOUT = 55       # RSI must cross ABOVE this (momentum building)
@@ -197,3 +197,44 @@ BULL_STOP_LOSS_ATR = 2.0     # Tighter SL (trends are your friend - 2x ATR)
 # =============================================================================
 LOG_FILE = "data/trades.json"
 LOG_LEVEL = "INFO"
+
+# =============================================================================
+# V4: The 4-State Strategy Configuration
+# =============================================================================
+STRATEGY_MAP = {
+    # 1. Bear Market / Weekday ("Sniper") - Scalping
+    "BEAR_WEEKDAY": {
+        "min_volume": 2000000,
+        "timeout_minutes": 45,
+        "rsi_limit": 32,
+        "min_stop_loss_pct": 1.5,
+        "slots_factor": 1.0,  # Standard slots
+    },
+    
+    # 2. Bear Market / Weekend ("Bunker") - Defensive
+    "BEAR_WEEKEND": {
+        "min_volume": 5000000,
+        "timeout_minutes": 90,
+        "rsi_limit": 28,  # Picky entry
+        "min_stop_loss_pct": 1.5,
+        "slots_factor": 0.5,  # 50% reduced slots
+    },
+    
+    # 3. Bull Market / Weekday ("Rally") - Trend Following
+    "BULL_WEEKDAY": {
+        "min_volume": 1500000,
+        "timeout_minutes": 120,
+        "rsi_limit": 40,  # Buy earlier (Dip Buy)
+        "min_stop_loss_pct": 2.5,  # Widen Stop
+        "slots_factor": 1.0,
+    },
+    
+    # 4. Bull Market / Weekend ("Volatility") - Chaos
+    "BULL_WEEKEND": {
+        "min_volume": 1000000,
+        "timeout_minutes": 180,
+        "rsi_limit": 35,
+        "min_stop_loss_pct": 3.0,  # Very Wide Stop
+        "slots_factor": 1.0,
+    }
+}
