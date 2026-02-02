@@ -845,7 +845,11 @@ class Analyzer:
         result.effective_rsi_threshold = used_threshold
         
         if not layer3_ok:
-            result.rejection_reason = f"Layer 3: Technicals (RSI {result.rsi:.1f} >= {used_threshold})"
+            # V4.2: Fix misleading rejection message
+            if RSI_HOOK_STRICT and not rsi_hook_triggered:
+                result.rejection_reason = f"Layer 3: RSI Hook not triggered (RSI {result.rsi:.1f}, need reversal)"
+            else:
+                result.rejection_reason = f"Layer 3: Technicals (RSI {result.rsi:.1f} >= {used_threshold})"
             return result
         
         # Layer 4: Volume Validation
