@@ -8,10 +8,10 @@ import os
 import requests
 from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 
-# Get bot version from environment (v2 or v3)
+# Get bot version from environment
 def get_version_label() -> str:
     """Get the version label for messages."""
-    version = os.getenv("BOT_VERSION", "v3").upper()
+    version = os.getenv("BOT_VERSION", "V4.1")
     return version
 
 
