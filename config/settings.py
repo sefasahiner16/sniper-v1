@@ -242,3 +242,61 @@ STRATEGY_MAP = {
         "slots_factor": 1.0,
     }
 }
+
+# =============================================================================
+# V4.1: BTC Volatility Filter (Risk Reduction)
+# =============================================================================
+BTC_VOLATILITY_FILTER_ENABLED = True
+BTC_VOLATILITY_THRESHOLD = 0.03  # If ATR/Price > 3%, reduce slots
+BTC_VOLATILITY_SLOT_REDUCTION = 0.5  # Reduce to 50% of max slots
+
+# =============================================================================
+# V4.1: Conditional RSI Hook Relaxation (BULL_WEEKDAY only)
+# =============================================================================
+RSI_HOOK_RELAXATION_ENABLED = True
+RSI_HOOK_RELAXATION_VOLUME_MULT = 2.5  # Volume must be >= 2.5x average
+
+# =============================================================================
+# V4.1: ATR-Based Trailing Stop
+# =============================================================================
+ATR_TRAILING_ENABLED = True
+ATR_TRAILING_MULTIPLIER = 1.5  # Trail by 1.5 × ATR%
+MIN_TRAILING_STOP_PCT = 1.2  # Hard minimum floor (NEVER go below this)
+
+# =============================================================================
+# V4.1: Conditional Time-Exit Extension
+# =============================================================================
+TIME_EXIT_EXTENSION_ENABLED = True
+TIME_EXIT_EXTENSION_MINUTES = 30  # Extend by 30 min if conditions met
+
+# =============================================================================
+# V4.1: Slot Correlation Protection (Sector Caps)
+# =============================================================================
+SECTOR_CAPS_ENABLED = True
+SECTOR_CAPS = {
+    "MEME": 4,    # Max 4 meme coins
+    "L1": 5,      # Max 5 Layer-1 coins
+    "L2": 5,      # Max 5 Layer-2 coins
+    "DEFAULT": 3  # Max 3 for uncategorized
+}
+
+# Sector classification (add coins as needed)
+SECTOR_CLASSIFICATION = {
+    # Meme Coins
+    "DOGE": "MEME", "SHIB": "MEME", "PEPE": "MEME", "FLOKI": "MEME",
+    "BONK": "MEME", "WIF": "MEME", "MEME": "MEME", "ELON": "MEME",
+    "BABYDOGE": "MEME", "NEIRO": "MEME", "TURBO": "MEME", "COQ": "MEME",
+    # Layer-1
+    "BTC": "L1", "ETH": "L1", "SOL": "L1", "AVAX": "L1", "ADA": "L1",
+    "DOT": "L1", "ATOM": "L1", "NEAR": "L1", "APT": "L1", "SUI": "L1",
+    "SEI": "L1", "TIA": "L1", "INJ": "L1", "FTM": "L1", "ALGO": "L1",
+    # Layer-2
+    "MATIC": "L2", "ARB": "L2", "OP": "L2", "IMX": "L2", "STRK": "L2",
+    "MANTA": "L2", "METIS": "L2", "ZK": "L2", "BLAST": "L2",
+}
+
+# =============================================================================
+# V4.1: Daily Drawdown Guard
+# =============================================================================
+DAILY_DRAWDOWN_GUARD_ENABLED = True
+DAILY_DRAWDOWN_LIMIT_PCT = -3.0  # Pause new entries if daily PnL <= -3%

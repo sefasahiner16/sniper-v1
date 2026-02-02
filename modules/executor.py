@@ -1,12 +1,16 @@
 """
-Sniper V3 - The Executor (State Machine)
-=========================================
+Sniper V4.1 - The Executor (State Machine)
+===========================================
 Manages trade lifecycle, position monitoring, and risk controls.
 
 V2 Features:
 - Ratchet Trailing Stop (only moves UP, never down)
 - Dead hours integration
 - Enhanced time-based exit
+
+V4.1 Features:
+- ATR-Based Trailing Stop (adaptive distance)
+- Conditional Time-Exit Extension (VWAP + RSI check)
 """
 
 import time
@@ -21,7 +25,10 @@ from config.settings import (
     BREAK_EVEN_TRIGGER_PCT, BREAK_EVEN_TARGET_PCT,
     TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, HARD_STOP_LOSS_PCT,
     MAX_CONSECUTIVE_LOSSES, CIRCUIT_BREAKER_HOURS,
-    RATCHET_TRAILING_STOP, MAX_CONCURRENT_SLOTS
+    RATCHET_TRAILING_STOP, MAX_CONCURRENT_SLOTS,
+    # V4.1 imports
+    ATR_TRAILING_ENABLED, ATR_TRAILING_MULTIPLIER, MIN_TRAILING_STOP_PCT,
+    TIME_EXIT_EXTENSION_ENABLED, TIME_EXIT_EXTENSION_MINUTES
 )
 from utils.helpers import Timer, calculate_pnl_pct, is_weekend
 from modules.scanner import get_scanner
@@ -62,6 +69,10 @@ class Position:
     entry_time: datetime = field(default_factory=datetime.now)
     timer: Timer = field(default_factory=Timer)
     server_stop_order_id: Optional[str] = None  # V3: Server-side stop order ID
+    # V4.1: For time-exit extension
+    entry_rsi: Optional[float] = None
+    entry_vwap: Optional[float] = None
+    atr_pct: Optional[float] = None  # ATR as % of price
     
     def __post_init__(self):
         self.highest_price = self.entry_price
@@ -301,6 +312,7 @@ class Executor:
         
         # ---------------------------------------------------------------------
         # STAGE 2: WIDE TRAILING STOP (Growth Phase)
+        # V4.1: ATR-Based Trailing Distance
         # ---------------------------------------------------------------------
         if pnl_pct >= TRAILING_STOP_ACTIVATION_PCT:
             # Check if we are already trailing or need to start
@@ -308,8 +320,20 @@ class Executor:
                 pos.trailing_activated = True
                 print(f"[EXECUTOR] 🚀 Starting STAGE 2: Wide Trail Activated (+{pnl_pct:.2f}%)")
             
+            # V4.1: Calculate ATR-based trailing distance
+            if ATR_TRAILING_ENABLED and pos.atr_pct is not None:
+                # Use max(MIN_TRAILING_STOP_PCT, ATR_TRAILING_MULTIPLIER × ATR%)
+                atr_trail_pct = ATR_TRAILING_MULTIPLIER * pos.atr_pct
+                effective_trail_pct = max(MIN_TRAILING_STOP_PCT, atr_trail_pct)
+                # Log only on first activation
+                if not pos.trailing_stop:
+                    print(f"[EXECUTOR] 📐 V4.1 ATR Trail: {effective_trail_pct:.2f}% (ATR×{ATR_TRAILING_MULTIPLIER}={atr_trail_pct:.2f}%, Min={MIN_TRAILING_STOP_PCT}%)")
+            else:
+                # Fallback to fixed distance
+                effective_trail_pct = TRAILING_STOP_DISTANCE_PCT
+            
             # Calculate trail price (Highest Price - Distance)
-            new_trailing = pos.highest_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            new_trailing = pos.highest_price * (1 - effective_trail_pct / 100)
             
             # Check if we should update (Ratchet: Only move UP)
             current_stop = pos.trailing_stop if pos.trailing_stop else pos.stop_loss
@@ -356,8 +380,17 @@ class Executor:
         except Exception as e:
             print(f"[EXECUTOR] ⚠️ Error updating server stop: {e}")
 
-    def check_exit_conditions(self, current_price: float) -> Optional[str]:
-        """Check exit conditions."""
+    def check_exit_conditions(self, current_price: float, current_rsi: Optional[float] = None, current_vwap: Optional[float] = None) -> Optional[str]:
+        """
+        Check exit conditions.
+        
+        V4.1: Supports conditional time-exit extension.
+        
+        Args:
+            current_price: Current asset price
+            current_rsi: Optional current RSI for time-exit extension check
+            current_vwap: Optional current VWAP for time-exit extension check
+        """
         if self.current_position is None:
             return None
         
@@ -373,7 +406,35 @@ class Executor:
         strategy = self.scanner.get_active_strategy()
         timeout_minutes = strategy.get('timeout_minutes', TIME_EXIT_MINUTES)
         
-        if pos.timer.has_exceeded(timeout_minutes):
+        # V4.1: Conditional Time-Exit Extension
+        # If ALL conditions met, extend by TIME_EXIT_EXTENSION_MINUTES
+        extended_timeout = timeout_minutes
+        
+        if TIME_EXIT_EXTENSION_ENABLED and pnl_pct >= 0:  # NEVER extend for losing trades
+            extension_allowed = True
+            
+            # Condition 1: Price must be above VWAP
+            if current_vwap is not None and pos.entry_vwap is not None:
+                if current_price <= current_vwap:
+                    extension_allowed = False
+            else:
+                extension_allowed = False  # Can't verify VWAP
+            
+            # Condition 2: Current RSI must be > Entry RSI (improving)
+            if extension_allowed and current_rsi is not None and pos.entry_rsi is not None:
+                if current_rsi <= pos.entry_rsi:
+                    extension_allowed = False
+            elif extension_allowed:
+                extension_allowed = False  # Can't verify RSI
+            
+            if extension_allowed:
+                extended_timeout = timeout_minutes + TIME_EXIT_EXTENSION_MINUTES
+                # Only log once per position
+                if not hasattr(pos, '_extension_logged'):
+                    print(f"[EXECUTOR] ⏱️ V4.1 Time-Exit EXTENDED: {timeout_minutes} → {extended_timeout} min (Price > VWAP, RSI improving)")
+                    pos._extension_logged = True
+        
+        if pos.timer.has_exceeded(extended_timeout):
             if pnl_pct < TIME_EXIT_MIN_PROFIT_PCT: return "TIME_EXIT"
         
         if pnl_pct <= -HARD_STOP_LOSS_PCT: return "SL_HIT"

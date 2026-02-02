@@ -1,6 +1,6 @@
 """
-Sniper V4.1 - Capital Manager
-==============================
+Sniper V2 - Capital Manager
+============================
 Manages dynamic capital allocation, slot sizing, and the BTC vault.
 
 Features:
@@ -8,24 +8,17 @@ Features:
 - Elastic slot sizing (Bull Mode)
 - Whale Cap enforcement
 - BTC Treasury (Vault) overflow/refill
-
-V4.1 Features:
-- Daily Drawdown Guard
-- Sector Slot Tracking (Correlation Protection)
 """
 
-from datetime import datetime, timezone, timedelta
-from typing import Tuple, Optional, Dict, List
+from datetime import datetime, timezone
+from typing import Tuple, Optional
 from dataclasses import dataclass
 
 from config.settings import (
     BASE_TRADE_SIZE, WHALE_CAP, MIN_SLOT_SIZE, MAX_CONCURRENT_SLOTS,
     VAULT_ENABLED, VAULT_OVERFLOW_MULTIPLIER, VAULT_CRITICAL_LEVEL,
     VAULT_REBALANCE_HOUR_UTC, OPERATIONAL_CAP,
-    DEAD_HOURS_ENABLED, DEAD_HOURS_START_UTC, DEAD_HOURS_END_UTC,
-    # V4.1 imports
-    DAILY_DRAWDOWN_GUARD_ENABLED, DAILY_DRAWDOWN_LIMIT_PCT,
-    SECTOR_CAPS_ENABLED, SECTOR_CAPS
+    DEAD_HOURS_ENABLED, DEAD_HOURS_START_UTC, DEAD_HOURS_END_UTC
 )
 
 
@@ -45,16 +38,6 @@ class CapitalManager:
         """Initialize the capital manager."""
         self.last_vault_rebalance: Optional[datetime] = None
         self.paper_btc_balance: float = 0.0  # For paper trading simulation
-        
-        # V4: BTC Flash Crash Kill Switch
-        self.kill_switch_activated: Optional[datetime] = None
-        
-        # V4.1: Daily Drawdown Guard
-        self.daily_realized_pnl: float = 0.0
-        self.daily_pnl_reset_date: Optional[datetime] = None
-        
-        # V4.1: Sector Tracking
-        self.sector_positions: Dict[str, List[str]] = {}  # sector -> [symbols]
     
     def calculate_slot_count(self, balance: float, max_slots_limit: int = MAX_CONCURRENT_SLOTS) -> int:
         """
@@ -78,6 +61,16 @@ class CapitalManager:
         
         return slot_count
     
+    def calculate_slot_size(
+        self, 
+        balance: float, 
+        active_slots: int,
+        queue_depth: int = 0,
+        max_slots_limit: int = MAX_CONCURRENT_SLOTS
+    ) -> float:
+        """
+        Calculate capital per slot with elastic sizing.
+        
     def calculate_slot_size(
         self, 
         balance: float, 
@@ -270,59 +263,6 @@ class CapitalManager:
         return True, minutes_until
     
     # =========================================================================
-    # V4: BTC Flash Crash Kill Switch
-    # =========================================================================
-    
-    def trigger_kill_switch(self):
-        """Activate the kill switch - pauses all trading."""
-        self.kill_switch_activated = datetime.now(timezone.utc)
-        print(f"[KILL SWITCH] 🚨 ACTIVATED! Trading paused for emergency.")
-    
-    def is_kill_switch_active(self) -> bool:
-        """
-        Check if kill switch is currently active.
-        
-        Returns:
-            True if trading should be paused due to kill switch
-        """
-        if self.kill_switch_activated is None:
-            return False
-        
-        from config.settings import BTC_CRASH_PAUSE_HOURS
-        
-        now = datetime.now(timezone.utc)
-        elapsed = now - self.kill_switch_activated
-        pause_duration = timedelta(hours=BTC_CRASH_PAUSE_HOURS)
-        
-        if elapsed >= pause_duration:
-            # Kill switch expired, reset it
-            print(f"[KILL SWITCH] ✅ Expired. Trading can resume.")
-            self.kill_switch_activated = None
-            return False
-        
-        return True
-    
-    def get_kill_switch_status(self) -> Tuple[bool, Optional[int]]:
-        """
-        Get kill switch status with time until resume.
-        
-        Returns:
-            Tuple of (is_active, minutes_until_resume)
-        """
-        if not self.is_kill_switch_active():
-            return False, None
-        
-        from config.settings import BTC_CRASH_PAUSE_HOURS
-        
-        now = datetime.now(timezone.utc)
-        elapsed = now - self.kill_switch_activated
-        pause_duration = timedelta(hours=BTC_CRASH_PAUSE_HOURS)
-        remaining = pause_duration - elapsed
-        minutes_remaining = int(remaining.total_seconds() / 60)
-        
-        return True, minutes_remaining
-    
-    # =========================================================================
     # The Vault (BTC Treasury)
     # =========================================================================
     
@@ -429,137 +369,10 @@ class CapitalManager:
             "last_rebalance": self.last_vault_rebalance,
             "next_rebalance_hour_utc": VAULT_REBALANCE_HOUR_UTC
         }
-    
-    # =========================================================================
-    # V4.1: Daily Drawdown Guard
-    # =========================================================================
-    
-    def record_trade_pnl(self, pnl_pct: float) -> None:
-        """
-        V4.1: Record a trade's PnL for daily drawdown tracking.
-        
-        Args:
-            pnl_pct: The P&L percentage of the closed trade
-        """
-        self._check_daily_reset()
-        self.daily_realized_pnl += pnl_pct
-        print(f"[CAPITAL] Daily P&L updated: {self.daily_realized_pnl:+.2f}%")
-    
-    def _check_daily_reset(self) -> None:
-        """Check if we need to reset daily PnL (new UTC day)."""
-        now = datetime.now(timezone.utc)
-        today = now.date()
-        
-        if self.daily_pnl_reset_date is None or self.daily_pnl_reset_date != today:
-            if self.daily_realized_pnl != 0:
-                print(f"[CAPITAL] 🌅 New UTC Day - Resetting daily P&L (was {self.daily_realized_pnl:+.2f}%)")
-            self.daily_realized_pnl = 0.0
-            self.daily_pnl_reset_date = today
-    
-    def is_daily_drawdown_limit_hit(self) -> bool:
-        """
-        V4.1: Check if daily drawdown limit has been hit.
-        
-        If True, new entries should be disabled until next UTC day.
-        Open positions continue to be managed normally.
-        
-        Returns:
-            True if daily PnL <= limit (e.g., -3%)
-        """
-        if not DAILY_DRAWDOWN_GUARD_ENABLED:
-            return False
-        
-        self._check_daily_reset()
-        
-        if self.daily_realized_pnl <= DAILY_DRAWDOWN_LIMIT_PCT:
-            print(f"[CAPITAL] 🚨 DAILY DRAWDOWN GUARD: P&L {self.daily_realized_pnl:.2f}% <= {DAILY_DRAWDOWN_LIMIT_PCT}% limit")
-            return True
-        
-        return False
-    
-    def get_daily_drawdown_status(self) -> Tuple[bool, float]:
-        """
-        V4.1: Get daily drawdown guard status.
-        
-        Returns:
-            Tuple of (is_limit_hit, current_daily_pnl)
-        """
-        self._check_daily_reset()
-        is_hit = self.is_daily_drawdown_limit_hit()
-        return is_hit, self.daily_realized_pnl
-    
-    # =========================================================================
-    # V4.1: Sector Tracking (Correlation Protection)
-    # =========================================================================
-    
-    def add_sector_position(self, symbol: str, sector: str) -> None:
-        """
-        V4.1: Track a new position by sector.
-        
-        Args:
-            symbol: Trading pair (e.g., "DOGE/USDT")
-            sector: Sector name (e.g., "MEME")
-        """
-        if sector not in self.sector_positions:
-            self.sector_positions[sector] = []
-        
-        if symbol not in self.sector_positions[sector]:
-            self.sector_positions[sector].append(symbol)
-    
-    def remove_sector_position(self, symbol: str, sector: str) -> None:
-        """
-        V4.1: Remove a position from sector tracking.
-        
-        Args:
-            symbol: Trading pair
-            sector: Sector name
-        """
-        if sector in self.sector_positions:
-            if symbol in self.sector_positions[sector]:
-                self.sector_positions[sector].remove(symbol)
-    
-    def get_sector_slot_count(self, sector: str) -> int:
-        """
-        V4.1: Get current slot count for a sector.
-        
-        Args:
-            sector: Sector name
-            
-        Returns:
-            Number of open positions in this sector
-        """
-        return len(self.sector_positions.get(sector, []))
-    
-    def can_open_sector_slot(self, sector: str) -> bool:
-        """
-        V4.1: Check if we can open another slot in this sector.
-        
-        Rules:
-        - Check against sector cap
-        - Never force-close existing positions
-        
-        Args:
-            sector: Sector name
-            
-        Returns:
-            True if sector cap allows, False otherwise
-        """
-        if not SECTOR_CAPS_ENABLED:
-            return True
-        
-        current_count = self.get_sector_slot_count(sector)
-        sector_cap = SECTOR_CAPS.get(sector, SECTOR_CAPS.get("DEFAULT", 10))
-        
-        if current_count >= sector_cap:
-            print(f"[CAPITAL] 🚫 Sector cap reached: {sector} has {current_count}/{sector_cap} slots")
-            return False
-        
-        return True
 
 
 # Singleton instance
 _capital_manager_instance = None
-
 
 def get_capital_manager() -> CapitalManager:
     """Get the global capital manager instance."""

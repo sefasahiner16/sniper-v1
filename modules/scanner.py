@@ -1,12 +1,16 @@
 """
-Sniper V2 - Market Scanner
-===========================
+Sniper V4.1 - Market Scanner
+=============================
 Scans MEXC for trading candidates based on volume and volatility.
 
 V2 Features:
 - Zombie Filter (liquidity check)
 - Chameleon Mode (market regime detection)
 - BTC SMA calculation
+
+V4.1 Features:
+- BTC Volatility Filter (slot reduction)
+- Sector Classification (correlation protection)
 """
 
 import ccxt
@@ -20,7 +24,10 @@ from config.settings import (
     ZOMBIE_FILTER_ENABLED, ZOMBIE_VOLUME_RATIO,
     CHAMELEON_MODE_ENABLED, BTC_SMA_PERIOD,
     BTC_RSI_PERIOD, BTC_RSI_THRESHOLD,
-    STRATEGY_MAP
+    STRATEGY_MAP,
+    # V4.1 imports
+    BTC_VOLATILITY_FILTER_ENABLED, BTC_VOLATILITY_THRESHOLD, BTC_VOLATILITY_SLOT_REDUCTION,
+    SECTOR_CLASSIFICATION, MAX_CONCURRENT_SLOTS
 )
 from utils.helpers import is_weekend
 
@@ -524,6 +531,93 @@ class Scanner:
         
         return config_with_name
 
+    # =========================================================================
+    # V4.1: BTC Volatility Filter
+    # =========================================================================
+    
+    def get_btc_volatility(self) -> Optional[float]:
+        """
+        V4.1: Calculate BTC volatility as ATR(14) / Price.
+        
+        Returns:
+            Volatility ratio (e.g., 0.03 = 3%) or None if error
+        """
+        try:
+            # Fetch 1-day candles for ATR calculation
+            ohlcv = self.exchange.fetch_ohlcv('BTC/USDT', '1d', limit=20)
+            if len(ohlcv) < 15:
+                return None
+            
+            df = pd.DataFrame(ohlcv, columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+            
+            # Calculate ATR manually
+            high_low = df['high'] - df['low']
+            high_close = abs(df['high'] - df['close'].shift())
+            low_close = abs(df['low'] - df['close'].shift())
+            tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+            atr = tr.rolling(window=14).mean().iloc[-1]
+            
+            current_price = df['close'].iloc[-1]
+            
+            if current_price > 0:
+                volatility = atr / current_price
+                return volatility
+            
+            return None
+            
+        except Exception as e:
+            print(f"[SCANNER] Error calculating BTC volatility: {e}")
+            return None
+    
+    def get_volatility_adjusted_slots(self, base_slots: int) -> int:
+        """
+        V4.1: Reduce slots if BTC volatility exceeds threshold.
+        
+        Rules:
+        - If BTC volatility > threshold, reduce slots by 50%
+        - Never force-close existing positions
+        - Never disable trading entirely
+        
+        Args:
+            base_slots: Normal slot count
+            
+        Returns:
+            Adjusted slot count (reduced if volatile)
+        """
+        if not BTC_VOLATILITY_FILTER_ENABLED:
+            return base_slots
+        
+        volatility = self.get_btc_volatility()
+        
+        if volatility is None:
+            return base_slots
+        
+        if volatility > BTC_VOLATILITY_THRESHOLD:
+            reduced = max(1, int(base_slots * BTC_VOLATILITY_SLOT_REDUCTION))
+            print(f"[SCANNER] ⚡ BTC Volatility HIGH ({volatility:.2%} > {BTC_VOLATILITY_THRESHOLD:.2%}): Slots reduced {base_slots} -> {reduced}")
+            return reduced
+        
+        return base_slots
+    
+    # =========================================================================
+    # V4.1: Sector Classification (Correlation Protection)
+    # =========================================================================
+    
+    def get_coin_sector(self, symbol: str) -> str:
+        """
+        V4.1: Classify a coin into a sector for correlation protection.
+        
+        Args:
+            symbol: Trading pair (e.g., "DOGE/USDT")
+            
+        Returns:
+            Sector name: "MEME", "L1", "L2", or "DEFAULT"
+        """
+        # Extract base currency (e.g., "DOGE" from "DOGE/USDT")
+        base = symbol.split('/')[0] if '/' in symbol else symbol
+        
+        return SECTOR_CLASSIFICATION.get(base, "DEFAULT")
+    
     # =========================================================================
     # V3: Server-Side Orders (Limit & Stop Loss)
     # =========================================================================

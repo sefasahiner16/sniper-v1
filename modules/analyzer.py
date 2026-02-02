@@ -1,6 +1,6 @@
 """
-Sniper V4 - The Analyzer (Enhanced 5-Layer Filter)
-===================================================
+Sniper V4.1 - The Analyzer (Enhanced 5-Layer Filter)
+=====================================================
 The brain of the trading system. Implements the enhanced 5-layer safety algorithm.
 
 V3 Features:
@@ -12,6 +12,9 @@ V3 Features:
 
 V4 Features:
 - Bull Mode: Trend-following strategy when BTC > SMA50
+
+V4.1 Features:
+- Conditional RSI Hook Relaxation (BULL_WEEKDAY only)
 """
 
 from dataclasses import dataclass, field
@@ -34,7 +37,9 @@ from config.settings import (
     BULL_MODE_ENABLED, BULL_RSI_BREAKOUT, BULL_BREAKOUT_PERIOD,
     BULL_TAKE_PROFIT_ATR, BULL_STOP_LOSS_ATR,
     COOLDOWN_MINUTES, BLACKLIST_LOSSES, BLACKLIST_DURATION_HOURS,
-    MIN_STOP_LOSS_PCT
+    MIN_STOP_LOSS_PCT,
+    # V4.1: Conditional RSI Hook Relaxation
+    RSI_HOOK_RELAXATION_ENABLED, RSI_HOOK_RELAXATION_VOLUME_MULT
 )
 from utils.helpers import is_weekend
 from modules.scanner import get_scanner
@@ -438,6 +443,50 @@ class Analyzer:
         
         return passed, technicals, rsi_hook_triggered, rsi_threshold
     
+    def check_rsi_hook_relaxation_allowed(
+        self,
+        strategy_name: str,
+        btc_change: float,
+        volume_ratio: float
+    ) -> bool:
+        """
+        V4.1: Check if RSI Hook can be relaxed for this specific trade.
+        
+        Relaxation is only allowed when ALL conditions are met:
+        1. RSI_HOOK_RELAXATION_ENABLED is True
+        2. Strategy is BULL_WEEKDAY
+        3. BTC 15-minute change > 0
+        4. Volume >= 2.5x average
+        
+        SAFETY: RSI Hook remains STRICT by default.
+        This only bypasses the hook for THIS SINGLE TRADE.
+        
+        Args:
+            strategy_name: Active strategy name
+            btc_change: BTC 15-minute price change
+            volume_ratio: Current volume / average volume
+            
+        Returns:
+            True if relaxation is allowed
+        """
+        if not RSI_HOOK_RELAXATION_ENABLED:
+            return False
+        
+        # Condition 1: Must be BULL_WEEKDAY strategy
+        if strategy_name != "BULL_WEEKDAY":
+            return False
+        
+        # Condition 2: BTC must be going up
+        if btc_change <= 0:
+            return False
+        
+        # Condition 3: Volume must be >= 2.5x average
+        if volume_ratio < RSI_HOOK_RELAXATION_VOLUME_MULT:
+            return False
+        
+        print(f"[ANALYZER] 🔓 V4.1 RSI Hook RELAXATION allowed: BULL_WEEKDAY + BTC +{btc_change:.2f}% + Volume {volume_ratio:.1f}x")
+        return True
+
     def check_layer3_bull_technical(
         self, 
         df: pd.DataFrame

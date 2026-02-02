@@ -1,6 +1,6 @@
 """
-Sniper V3 - The Dispatcher (Multi-Slot Async Orchestrator)
-===========================================================
+Sniper V4.1 - The Dispatcher (Multi-Slot Async Orchestrator)
+=============================================================
 Core V3 architecture: Producer-Consumer pattern with multiple slots.
 
 Components:
@@ -12,6 +12,11 @@ V3 Features:
 - 3 concurrent trading slots
 - Independent position management per slot
 - Slot-aware notifications
+
+V4.1 Features:
+- BTC Volatility Slot Reduction
+- Daily Drawdown Guard
+- Sector Slot Caps (Correlation Protection)
 """
 
 import asyncio
@@ -22,7 +27,8 @@ from enum import Enum
 
 from config.settings import (
     SCAN_INTERVAL_SECONDS, MAX_CONCURRENT_SLOTS,
-    PAPER_TRADING, INITIAL_BALANCE, BASE_TRADE_SIZE, WHALE_CAP
+    PAPER_TRADING, INITIAL_BALANCE, BASE_TRADE_SIZE, WHALE_CAP,
+    SECTOR_CAPS_ENABLED
 )
 from modules.scanner import get_scanner
 from modules.analyzer import get_analyzer, AnalysisResult
@@ -64,6 +70,8 @@ class SlotPosition:
     highest_price: float = field(default=0.0)
     entry_time: datetime = field(default_factory=datetime.now)
     timer: Timer = field(default_factory=Timer)
+    # V4.1: Sector tracking
+    sector: str = "DEFAULT"
     
     def __post_init__(self):
         self.highest_price = self.entry_price
@@ -98,11 +106,23 @@ class SniperSlot:
         return f"[SLOT-{self.slot_id}]"
     
     async def can_trade(self) -> bool:
-        """Check if this slot can take a new trade."""
+        """
+        Check if this slot can take a new trade.
+        
+        V4.1: Also checks daily drawdown guard.
+        """
         if self.position is not None:
             return False
         
         if self.capital_manager.is_dead_hours(include_buffer=True):
+            return False
+        
+        # V4.1: Check Daily Drawdown Guard
+        if self.capital_manager.is_daily_drawdown_limit_hit():
+            return False
+        
+        # V4.1: Check Kill Switch
+        if self.capital_manager.is_kill_switch_active():
             return False
         
         # Check if we have capital available
@@ -118,6 +138,22 @@ class SniperSlot:
         
         return True
     
+    async def can_trade_symbol(self, symbol: str) -> bool:
+        """
+        V4.1: Check if this specific symbol can be traded (sector caps).
+        
+        Args:
+            symbol: Trading pair to check
+            
+        Returns:
+            True if sector cap allows, False otherwise
+        """
+        if not SECTOR_CAPS_ENABLED:
+            return True
+        
+        sector = self.scanner.get_coin_sector(symbol)
+        return self.capital_manager.can_open_sector_slot(sector)
+    
     async def enter_position(self, analysis: AnalysisResult) -> bool:
         """Enter a new position based on analysis."""
         if not analysis.is_buy_signal:
@@ -125,6 +161,11 @@ class SniperSlot:
         
         symbol = analysis.symbol
         price = analysis.price
+        
+        # V4.1: Check sector cap before entering
+        if not await self.can_trade_symbol(symbol):
+            print(f"{self.get_slot_name()} ❌ Sector cap reached for {symbol}")
+            return False
         
         # Calculate position size
         available = self.shared_state.get('balance', INITIAL_BALANCE)
@@ -134,6 +175,9 @@ class SniperSlot:
         # Create trade ID
         trade_id = f"SLOT{self.slot_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
         
+        # V4.1: Get sector for tracking
+        sector = self.scanner.get_coin_sector(symbol)
+        
         # Create position
         self.position = SlotPosition(
             symbol=symbol,
@@ -142,14 +186,17 @@ class SniperSlot:
             quantity=quantity,
             take_profit=analysis.take_profit,
             stop_loss=analysis.stop_loss,
-            slot_id=self.slot_id
+            slot_id=self.slot_id,
+            sector=sector
         )
         self.allocated_capital = slot_size
         self.state = SlotState.IN_POSITION
         
-        print(f"{self.get_slot_name()} 🎯 ENTERED: {symbol} @ ${price:.6f} (Size: ${slot_size:.2f})")
+        # V4.1: Register position with capital manager for sector tracking
+        self.capital_manager.add_sector_position(symbol, sector)
         
-        # Log and notify
+        print(f"{self.get_slot_name()} 🎯 ENTERED: {symbol} @ ${price:.6f} (Size: ${slot_size:.2f}, Sector: {sector})")
+        
         # Log and notify
         try:
             log_trade_entry(
@@ -159,7 +206,7 @@ class SniperSlot:
                 quantity=quantity,
                 take_profit=analysis.take_profit,
                 stop_loss=analysis.stop_loss,
-                balance_before=available # Passed available as approximate balance before
+                balance_before=available
             )
         except Exception as e:
             print(f"{self.get_slot_name()} ⚠️ Logging failed: {e}")
@@ -188,6 +235,12 @@ class SniperSlot:
         
         # Update paper balance
         self.shared_state['balance'] = self.shared_state.get('balance', INITIAL_BALANCE) + pnl_usd
+        
+        # V4.1: Record PnL for daily drawdown guard
+        self.capital_manager.record_trade_pnl(pnl_pct)
+        
+        # V4.1: Remove sector position tracking
+        self.capital_manager.remove_sector_position(pos.symbol, pos.sector)
         
         # Log and notify
         log_trade_exit(

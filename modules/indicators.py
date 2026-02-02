@@ -96,6 +96,25 @@ def calculate_highest_high(df: pd.DataFrame, period: int = 20) -> pd.Series:
     return df['high'].rolling(window=period).max()
 
 
+def calculate_vwap(df: pd.DataFrame) -> pd.Series:
+    """
+    Calculate Volume Weighted Average Price (VWAP).
+    
+    V4.1: Used for conditional time-exit extension.
+    
+    Args:
+        df: DataFrame with 'high', 'low', 'close', 'volume' columns
+        
+    Returns:
+        Series of VWAP values
+    """
+    typical_price = (df['high'] + df['low'] + df['close']) / 3
+    cumulative_tp_vol = (typical_price * df['volume']).cumsum()
+    cumulative_vol = df['volume'].cumsum()
+    vwap = cumulative_tp_vol / cumulative_vol
+    return vwap
+
+
 def analyze_technicals(df: pd.DataFrame) -> Dict:
     """
     Calculate all technical indicators for analysis.
