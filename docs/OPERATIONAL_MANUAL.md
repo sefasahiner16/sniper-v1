@@ -1,6 +1,6 @@
-# Sniper V4 — Complete Operational Manual
+# Sniper V4.1 — Complete Operational Manual
 
-**Version**: 4.0  
+**Version**: 4.1  
 **Last Updated**: February 2, 2026  
 **Strategy**: Multi-State Adaptive Mean-Reversion Trading System
 
@@ -14,18 +14,19 @@
 5. [Exit Logic: Dual-Stage Ratchet](#5-exit-logic-dual-stage-ratchet)
 6. [Risk Management](#6-risk-management)
 7. [Capital Management](#7-capital-management)
-8. [Configuration Reference](#8-configuration-reference)
-9. [Telegram Notifications](#9-telegram-notifications)
-10. [Deployment](#10-deployment)
-11. [Troubleshooting](#11-troubleshooting)
+8. [V4.1 Enhancements](#8-v41-enhancements)
+9. [Configuration Reference](#9-configuration-reference)
+10. [Telegram Notifications](#10-telegram-notifications)
+11. [Deployment](#11-deployment)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
 ## 1. Overview
 
-### What is Sniper V4?
+### What is Sniper V4.1?
 
-Sniper V4 is an automated cryptocurrency trading bot designed for **mean-reversion trading** on the MEXC exchange. It identifies oversold altcoins, waits for reversal confirmation, then enters positions with strict risk management.
+Sniper V4.1 is an automated cryptocurrency trading bot designed for **mean-reversion trading** on the MEXC exchange. It identifies oversold altcoins, waits for reversal confirmation, then enters positions with strict risk management.
 
 ### Core Philosophy
 
@@ -44,6 +45,14 @@ Sniper V4 is an automated cryptocurrency trading bot designed for **mean-reversi
 - 🧟 **Zombie Filter**: Avoids illiquid coins
 - 🚨 **Kill Switch**: Auto-pauses on BTC flash crashes
 - 📦 **The Vault**: BTC treasury for profits
+
+**V4.1 Enhancements:**
+- ⚡ **BTC Volatility Filter**: Reduces slots by 50% during high volatility
+- 🔓 **Conditional RSI Hook Relaxation**: Captures V-shaped reversals in bull markets
+- 📐 **ATR-Based Trailing Stop**: Adaptive trailing distance
+- ⏱️ **Time-Exit Extension**: Extends timeout for healthy trades
+- 🛡️ **Sector Caps**: Limits correlated positions (MEME: 4, L1/L2: 5)
+- 📉 **Daily Drawdown Guard**: Pauses at -3% daily loss
 
 ---
 
@@ -305,7 +314,102 @@ When USDT balance exceeds operational cap, the bot automatically buys BTC to sto
 
 ---
 
-## 8. Configuration Reference
+## 8. V4.1 Enhancements
+
+V4.1 introduces 6 risk-safe improvements that increase stability without increasing drawdown risk.
+
+> ⚠️ **IMPORTANT**: These changes never loosen base entry filters globally. They are conditional adaptations, not permanent relaxations.
+
+### 1. BTC Volatility Filter
+
+**Problem**: Coarse market regime detection doesn't account for volatility spikes.
+
+**Solution**: Reduce slot count (not disable trading) when BTC is volatile.
+
+| Setting | Value | Description |
+|---------|-------|-------------|
+| `BTC_VOLATILITY_THRESHOLD` | 0.03 | If ATR(14)/Price > 3% |
+| `BTC_VOLATILITY_SLOT_REDUCTION` | 0.5 | Reduce slots by 50% |
+
+**NEVER**: Force-close open positions or disable trading entirely.
+
+### 2. Conditional RSI Hook Relaxation
+
+**Problem**: Strict RSI Hook can miss V-shaped reversals in strong bull markets.
+
+**Solution**: Allow bypass ONLY when ALL conditions are met:
+
+| Condition | Requirement |
+|-----------|-------------|
+| Strategy | BULL_WEEKDAY only |
+| BTC Change | 15-min change > 0 |
+| Volume | Current >= 2.5x average |
+
+**NEVER**: Disable RSI Hook globally or relax in BEAR regimes.
+
+### 3. ATR-Based Trailing Stop
+
+**Problem**: Fixed trailing distance doesn't scale with volatility.
+
+**Solution**: Adaptive trailing using ATR.
+
+```
+Trailing Stop Distance = max(1.2%, 1.5 × ATR%)
+```
+
+| Setting | Value |
+|---------|-------|
+| `ATR_TRAILING_MULTIPLIER` | 1.5 |
+| `MIN_TRAILING_STOP_PCT` | 1.2% (hard floor) |
+
+**NEVER**: Reduce trailing stop below 1.2% or remove break-even protection.
+
+### 4. Conditional Time-Exit Extension
+
+**Problem**: Some valid reversals resolve slowly.
+
+**Solution**: Extend timeout by 30 minutes IF:
+
+| Condition | Check |
+|-----------|-------|
+| Price | Above VWAP |
+| RSI | Current RSI > Entry RSI |
+| P&L | Not in loss |
+
+**NEVER**: Extend timeout for losing trades.
+
+### 5. Slot Correlation Protection (Sector Caps)
+
+**Problem**: Multiple correlated positions amplify drawdowns.
+
+**Solution**: Sector-based slot limits.
+
+| Sector | Max Slots |
+|--------|-----------|
+| MEME | 4 |
+| L1 (Layer-1) | 5 |
+| L2 (Layer-2) | 5 |
+| DEFAULT | 3 |
+
+**NEVER**: Force-close trades to rebalance sectors.
+
+### 6. Daily Drawdown Guard
+
+**Problem**: Most failures occur after giving back profits on bad days.
+
+**Solution**: 
+```
+If Daily Realized PnL <= -3%
+→ Disable new entries until next UTC day
+```
+
+- Open positions continue to be managed normally
+- All stops remain active
+- Trading auto-resumes at midnight UTC
+
+---
+
+## 9. Configuration Reference
 
 ### Scanner Settings (`config/settings.py`)
 
@@ -362,7 +466,7 @@ When USDT balance exceeds operational cap, the bot automatically buys BTC to sto
 
 ---
 
-## 9. Telegram Notifications
+## 10. Telegram Notifications
 
 ### Notification Types
 
@@ -386,7 +490,7 @@ TELEGRAM_CHAT_ID=your_chat_id
 
 ---
 
-## 10. Deployment
+## 11. Deployment
 
 ### Local Development
 
@@ -429,7 +533,7 @@ python main.py --legacy    # Run bot (V2 single-slot)
 
 ---
 
-## 11. Troubleshooting
+## 12. Troubleshooting
 
 ### Bot Not Buying — Common Causes
 
