@@ -1,14 +1,15 @@
 """
-Sniper V4.1 - Market Scanner
+Sniper V5 - Market Scanner
 =============================
 Scans MEXC for trading candidates based on volume and volatility.
 
-V2 Features:
-- Zombie Filter (liquidity check)
-- Chameleon Mode (market regime detection)
-- BTC SMA calculation
+V5 Features:
+- Automatic Market Regime Detection (QUIET/TRANSITIONAL/TRENDING/FAKE)
+- Regime-specific entry filters
+- Integration with Handler capital authority
 
-V4.1 Features:
+Legacy Features:
+- Zombie Filter (liquidity check)
 - BTC Volatility Filter (slot reduction)
 - Sector Classification (correlation protection)
 """
@@ -27,9 +28,12 @@ from config.settings import (
     STRATEGY_MAP,
     # V4.1 imports
     BTC_VOLATILITY_FILTER_ENABLED, BTC_VOLATILITY_THRESHOLD, BTC_VOLATILITY_SLOT_REDUCTION,
-    SECTOR_CLASSIFICATION, MAX_CONCURRENT_SLOTS
+    SECTOR_CLASSIFICATION, MAX_CONCURRENT_SLOTS,
+    # V5 imports
+    REGIME_CONFIG, REGIME_EXIT_CONFIG,
 )
 from utils.helpers import is_weekend
+from modules.regime_detector import detect_regime, MarketRegime, RegimeAnalysis
 
 
 class Scanner:
@@ -499,37 +503,43 @@ class Scanner:
 
     def get_active_strategy(self) -> dict:
         """
-        Determine the active trading strategy based on market regime and day.
+        V5: Determine the active trading strategy based on new 4-regime system.
         
         Returns:
-            Dictionary with strategy configuration (min_volume, rsi_limit, etc.)
+            Dictionary with strategy configuration (rsi_oversold, volume_spike_mult, etc.)
         """
-        # 1. Get Regime (BULL / BEAR)
-        regime, _, _ = self.get_market_regime()
-        is_bull = (regime == "BULL")
+        # V5: Use new regime detector
+        regime_analysis = self.get_current_regime()
+        regime_name = regime_analysis.regime.value
         
-        # 2. Get Day (WEEKEND / WEEKDAY)
-        is_weekend_now = is_weekend()
+        # Get regime-specific config
+        config = REGIME_CONFIG.get(regime_name, REGIME_CONFIG["TRANSITIONAL"]).copy()
+        exit_config = REGIME_EXIT_CONFIG.get(regime_name, REGIME_EXIT_CONFIG["TRANSITIONAL"])
         
-        # 3. Select Strategy
-        if is_bull:
-            if is_weekend_now:
-                strategy_name = "BULL_WEEKEND"
-            else:
-                strategy_name = "BULL_WEEKDAY"
-        else:
-            if is_weekend_now:
-                strategy_name = "BEAR_WEEKEND"
-            else:
-                strategy_name = "BEAR_WEEKDAY"
+        # Merge entry and exit configs
+        config.update(exit_config)
+        config['name'] = regime_name
+        config['regime_analysis'] = regime_analysis
         
-        config = STRATEGY_MAP.get(strategy_name, STRATEGY_MAP["BEAR_WEEKDAY"])
+        # Map to legacy format for compatibility
+        config['min_volume'] = MIN_24H_VOLUME_USDT  # Base volume filter
+        config['rsi_limit'] = config.get('rsi_oversold', 32)
+        config['timeout_minutes'] = config.get('time_exit_minutes', 45)
+        config['min_stop_loss_pct'] = config.get('stop_loss_pct', 2.0)
+        config['slots_factor'] = config.get('max_slots_factor', 1.0)
         
-        # Add strategy name to config for logging
-        config_with_name = config.copy()
-        config_with_name['name'] = strategy_name
+        print(f"[SCANNER] 🎯 Strategy: {regime_name} | RSI≤{config['rsi_limit']} | VolSpike≥{config.get('volume_spike_mult', 1.5)}x | Slots={config['slots_factor']*100:.0f}%")
         
-        return config_with_name
+        return config
+    
+    def get_current_regime(self) -> RegimeAnalysis:
+        """
+        V5: Get current market regime using the new detector.
+        
+        Returns:
+            RegimeAnalysis with full breakdown
+        """
+        return detect_regime(self.exchange)
 
     # =========================================================================
     # V4.1: BTC Volatility Filter

@@ -1,22 +1,18 @@
 """
-Sniper V4.1 - The Dispatcher (Multi-Slot Async Orchestrator)
+Sniper V5 - The Dispatcher (Multi-Slot Async Orchestrator)
 =============================================================
 Core V3 architecture: Producer-Consumer pattern with multiple slots.
+
+V5 Features:
+- Handler integration (Capital Authority Layer)
+- Regime-aware slot management
+- Winner Protection (asymmetric exit rules)
 
 Components:
 - Watchtower: Async scanner that finds opportunities (Producer)
 - SniperSlot: Async worker that manages ONE position (Consumer)
+- Handler: Capital authority with final veto power
 - Dispatcher: Orchestrates multiple slots
-
-V3 Features:
-- 3 concurrent trading slots
-- Independent position management per slot
-- Slot-aware notifications
-
-V4.1 Features:
-- BTC Volatility Slot Reduction
-- Daily Drawdown Guard
-- Sector Slot Caps (Correlation Protection)
 """
 
 import asyncio
@@ -28,11 +24,13 @@ from enum import Enum
 from config.settings import (
     SCAN_INTERVAL_SECONDS, MAX_CONCURRENT_SLOTS,
     PAPER_TRADING, INITIAL_BALANCE, BASE_TRADE_SIZE, WHALE_CAP,
-    SECTOR_CAPS_ENABLED
+    SECTOR_CAPS_ENABLED, REGIME_CONFIG,
 )
 from modules.scanner import get_scanner
 from modules.analyzer import get_analyzer, AnalysisResult
 from modules.capital_manager import get_capital_manager
+from modules.handler import get_handler, TradeDecision
+from modules.regime_detector import MarketRegime
 from utils.notifier import send_message, notify_buy, notify_sell, notify_startup
 from utils.logger import log_trade_entry, log_trade_exit, print_performance_summary
 from utils.helpers import Timer, calculate_pnl_pct
@@ -98,6 +96,7 @@ class SniperSlot:
         self.scanner = get_scanner()
         self.analyzer = get_analyzer()
         self.capital_manager = get_capital_manager()
+        self.handler = get_handler()  # V5: Handler integration
         
         # Slot-specific paper balance
         self.allocated_capital = 0.0
@@ -109,7 +108,7 @@ class SniperSlot:
         """
         Check if this slot can take a new trade.
         
-        V4.1: Also checks daily drawdown guard.
+        V5: Integrated Handler capital authority for final approval.
         """
         if self.position is not None:
             return False
@@ -124,6 +123,20 @@ class SniperSlot:
         # V4.1: Check Kill Switch
         if self.capital_manager.is_kill_switch_active():
             return False
+        
+        # V5: Get current regime and check if trading is allowed
+        try:
+            strategy = self.scanner.get_active_strategy()
+            regime_name = strategy.get('name', 'TRANSITIONAL')
+            regime_allows = REGIME_CONFIG.get(regime_name, {}).get('allow_trades', True)
+            
+            # V5: Handler has final authority
+            decision = self.handler.approve_trade(regime_allows=regime_allows)
+            if decision != TradeDecision.APPROVED:
+                print(f"{self.get_slot_name()} ⛔ Handler blocked: {decision.value}")
+                return False
+        except Exception as e:
+            print(f"{self.get_slot_name()} ⚠️ Handler check error: {e}")
         
         # Check if we have capital available
         total_allocated = sum(
@@ -259,7 +272,7 @@ class SniperSlot:
         return True
     
     async def monitor_position(self) -> Optional[str]:
-        """Monitor position and check exit conditions."""
+        """Monitor position and check exit conditions with V5 Winner Protection."""
         if self.position is None:
             return None
         
@@ -280,11 +293,10 @@ class SniperSlot:
         
         pnl_pct = calculate_pnl_pct(pos.entry_price, current_price)
         
-        # Check exit conditions
-        from config.settings import (
-            TRAILING_STOP_ACTIVATION_PCT, TRAILING_STOP_DISTANCE_PCT,
-            TIME_EXIT_MINUTES, TIME_EXIT_MIN_PROFIT_PCT, RATCHET_TRAILING_STOP
-        )
+        # V5: Get asymmetric exit rules from Handler
+        exit_rules = self.handler.get_exit_rules(pnl_pct)
+        
+        from config.settings import RATCHET_TRAILING_STOP
         
         # Take Profit
         if current_price >= pos.take_profit:
@@ -296,15 +308,17 @@ class SniperSlot:
             await self.exit_position("SL_HIT", current_price)
             return "SL_HIT"
         
-        # Trailing Stop activation
-        if not pos.trailing_activated and pnl_pct >= TRAILING_STOP_ACTIVATION_PCT:
+        # V5: Trailing Stop activation using Winner Protection rules
+        if not pos.trailing_activated and pnl_pct >= exit_rules.trailing_activation_pct:
             pos.trailing_activated = True
-            pos.trailing_stop = current_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
-            print(f"{self.get_slot_name()} 📈 Trailing stop activated @ ${pos.trailing_stop:.6f}")
+            pos.trailing_stop = current_price * (1 - exit_rules.trailing_distance_pct / 100)
+            is_winner = self.handler.is_winner(pnl_pct)
+            winner_tag = "🏆 WINNER" if is_winner else ""
+            print(f"{self.get_slot_name()} 📈 Trailing stop activated @ ${pos.trailing_stop:.6f} (Trail: {exit_rules.trailing_distance_pct}%) {winner_tag}")
         
         # Ratchet trailing stop update (only moves UP)
         if pos.trailing_activated and RATCHET_TRAILING_STOP:
-            new_stop = pos.highest_price * (1 - TRAILING_STOP_DISTANCE_PCT / 100)
+            new_stop = pos.highest_price * (1 - exit_rules.trailing_distance_pct / 100)
             if new_stop > pos.trailing_stop:
                 pos.trailing_stop = new_stop
         
@@ -313,10 +327,12 @@ class SniperSlot:
             await self.exit_position("TRAILING_STOP", current_price)
             return "TRAILING_STOP"
         
-        # Time-based exit
-        if pos.timer.has_exceeded(TIME_EXIT_MINUTES) and pnl_pct < TIME_EXIT_MIN_PROFIT_PCT:
-            await self.exit_position("TIME_EXIT", current_price)
-            return "TIME_EXIT"
+        # V5: Time-based exit using Winner Protection rules
+        if exit_rules.time_exit_enabled:
+            from config.settings import TIME_EXIT_MIN_PROFIT_PCT
+            if pos.timer.has_exceeded(exit_rules.time_exit_minutes) and pnl_pct < TIME_EXIT_MIN_PROFIT_PCT:
+                await self.exit_position("TIME_EXIT", current_price)
+                return "TIME_EXIT"
         
         return None
     

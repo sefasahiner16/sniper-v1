@@ -300,3 +300,107 @@ SECTOR_CLASSIFICATION = {
 # =============================================================================
 DAILY_DRAWDOWN_GUARD_ENABLED = True
 DAILY_DRAWDOWN_LIMIT_PCT = -3.0  # Pause new entries if daily PnL <= -3%
+
+# =============================================================================
+# V5: AUTOMATIC MARKET REGIME SYSTEM
+# =============================================================================
+
+# Volatility Detection (Normalized ATR on 15m)
+REGIME_ATR_PERIOD = 14
+REGIME_ATR_LOOKBACK_DAYS = 7  # For 7-day average normalization
+
+VOLATILITY_LOW_THRESHOLD = 0.8       # Normalized_ATR < 0.8 = LOW
+VOLATILITY_MEDIUM_UPPER = 1.3        # 0.8 <= Normalized_ATR <= 1.3 = MEDIUM
+VOLATILITY_HIGH_THRESHOLD = 1.3      # Normalized_ATR > 1.3 = HIGH
+VOLATILITY_EXTREME_THRESHOLD = 2.0   # Normalized_ATR > 2.0 = EXTREME
+
+# Momentum Detection (EMA Slope)
+MOMENTUM_EMA_PERIOD = 20
+MOMENTUM_LOOKBACK_BARS = 10
+MOMENTUM_WEAK_THRESHOLD = 0.15       # |slope| < 0.15% = WEAK
+MOMENTUM_STRONG_THRESHOLD = 0.35     # |slope| > 0.35% = STRONG
+
+# Market Breadth Detection
+BREADTH_COIN_UNIVERSE = 50           # Top N coins by volume
+BREADTH_RETURN_THRESHOLD = 0.003     # >0.3% 15m return = positive
+BREADTH_WEAK_THRESHOLD = 20          # < 20% positive = WEAK
+BREADTH_STRONG_THRESHOLD = 40        # > 40% positive = STRONG
+
+# Per-Regime Entry Filter Configuration
+REGIME_CONFIG = {
+    "QUIET": {
+        "rsi_oversold": 30,
+        "rsi_hook_strict": True,
+        "volume_spike_mult": 1.8,
+        "max_slots_factor": 0.35,    # 30-40% of max slots
+        "min_expected_profit": 2.5,
+        "allow_trades": True,
+    },
+    "TRANSITIONAL": {
+        "rsi_oversold": 34,
+        "rsi_hook_strict": True,
+        "volume_spike_mult": 1.5,
+        "max_slots_factor": 0.65,    # 60-70% of max slots
+        "min_expected_profit": 2.0,
+        "allow_trades": True,
+    },
+    "TRENDING": {
+        "rsi_oversold": 40,
+        "rsi_hook_strict": False,    # Relaxed - let momentum enter
+        "volume_spike_mult": 1.2,
+        "max_slots_factor": 1.0,     # 100% of max slots
+        "min_expected_profit": 1.5,
+        "allow_trades": True,
+    },
+    "FAKE_NO_TRADE": {
+        "rsi_oversold": 25,
+        "rsi_hook_strict": True,
+        "volume_spike_mult": 2.5,
+        "max_slots_factor": 0.0,     # No new trades
+        "min_expected_profit": 5.0,
+        "allow_trades": False,       # BLOCK new entries
+    },
+}
+
+# Per-Regime Exit/Risk Parameters
+REGIME_EXIT_CONFIG = {
+    "QUIET": {
+        "stop_loss_pct": 1.5,
+        "trailing_distance": 1.5,
+        "time_exit_minutes": 30,
+    },
+    "TRANSITIONAL": {
+        "stop_loss_pct": 2.0,
+        "trailing_distance": 2.0,
+        "time_exit_minutes": 45,
+    },
+    "TRENDING": {
+        "stop_loss_pct": 2.5,
+        "trailing_distance": 3.0,
+        "time_exit_minutes": 90,
+    },
+    "FAKE_NO_TRADE": {
+        "stop_loss_pct": 1.2,        # Tighten aggressively
+        "trailing_distance": 1.0,
+        "time_exit_minutes": 15,     # Very short
+    },
+}
+
+# =============================================================================
+# V5: HANDLER - CAPITAL AUTHORITY LAYER
+# =============================================================================
+
+# Risk Budget Limits
+DAILY_LOSS_LIMIT_PCT = -3.0          # Block new trades if daily PnL <= this
+WEEKLY_LOSS_LIMIT_PCT = -8.0         # Block new trades if weekly PnL <= this
+ROLLING_DRAWDOWN_LIMIT_PCT = -15.0   # Block if peak-to-trough drawdown > this
+
+# Profit Locking (Protect Gains)
+PROFIT_LOCK_TRIGGER_PCT = 5.0        # Lock profits after 5% daily gain
+PROFIT_LOCK_RATIO = 0.5              # Lock 50% of daily gains
+
+# Winner Protection (Asymmetric Exit Rules)
+WINNER_THRESHOLD_PCT = 1.5           # Position is "winner" if unrealized > 1.5%
+WINNER_TIME_EXIT_DISABLED = True     # Disable time exit for winners
+WINNER_TRAILING_ACTIVATION_PCT = 2.5 # Wide trailing for winners
+WINNER_TRAILING_DISTANCE_PCT = 3.5   # Let winners run with wide trail

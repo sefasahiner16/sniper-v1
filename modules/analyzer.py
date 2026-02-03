@@ -1,20 +1,15 @@
 """
-Sniper V4.1 - The Analyzer (Enhanced 5-Layer Filter)
+Sniper V5 - The Analyzer (Enhanced 5-Layer Filter)
 =====================================================
 The brain of the trading system. Implements the enhanced 5-layer safety algorithm.
 
-V3 Features:
-- RSI Hook: Buy on RSI crossing BACK above threshold
-- Zombie Filter: Liquidity check integration
-- Chameleon Mode: Dynamic RSI thresholds based on market regime
-- Multi-Timeframe: Confirm on 5m AND 15m charts
-- Volume Capitulation: Detect 5x+ volume panic selling
+V5 Features:
+- Automatic Market Regime integration
+- Regime-specific RSI/Volume thresholds
+- Handler-aware analysis
 
-V4 Features:
-- Bull Mode: Trend-following strategy when BTC > SMA50
-
-V4.1 Features:
-- Conditional RSI Hook Relaxation (BULL_WEEKDAY only)
+Legacy Features:
+- RSI Hook, Zombie Filter, Multi-Timeframe, Volume Capitulation
 """
 
 from dataclasses import dataclass, field
@@ -567,12 +562,15 @@ class Analyzer:
         
         return passed, technicals, rsi_breakout_ok, price_breakout_ok
     
-    def check_layer4_volume(self, technicals: dict) -> tuple[bool, float]:
+    def check_layer4_volume(self, technicals: dict, volume_spike_override: float = None) -> tuple[bool, float]:
         """
         Layer 4: Check volume spike.
         
+        V5: Now accepts regime-specific volume spike multiplier.
+        
         Args:
             technicals: Technical analysis dictionary
+            volume_spike_override: Optional regime-specific multiplier
             
         Returns:
             Tuple of (passed, volume_ratio)
@@ -585,12 +583,13 @@ class Analyzer:
             return False, 0.0
         
         ratio = volume / volume_ma
-        passed = ratio >= VOLUME_SPIKE_MULTIPLIER
+        required = volume_spike_override if volume_spike_override else VOLUME_SPIKE_MULTIPLIER
+        passed = ratio >= required
         
         if passed:
-            print(f"[ANALYZER] Layer 4 ✓: Volume {ratio:.2f}x average >= {VOLUME_SPIKE_MULTIPLIER}x required")
+            print(f"[ANALYZER] Layer 4 ✓: Volume {ratio:.2f}x average >= {required}x required")
         else:
-            print(f"[ANALYZER] Layer 4 ✗: Volume {ratio:.2f}x average < {VOLUME_SPIKE_MULTIPLIER}x (weak momentum)")
+            print(f"[ANALYZER] Layer 4 ✗: Volume {ratio:.2f}x average < {required}x (weak momentum)")
         
         return passed, ratio
     
@@ -729,18 +728,20 @@ class Analyzer:
             AnalysisResult with all layer results and targets
         """
         print(f"\n{'='*50}")
-        print(f"[ANALYZER] Starting V4 analysis for {symbol}")
+        print(f"[ANALYZER] Starting V5 analysis for {symbol}")
         print('='*50)
         
-        # V4: Dynamic Strategy Configuration
+        # V5: Dynamic Strategy Configuration from Regime System
         strategy = self.scanner.get_active_strategy()
-        market_regime = "BULL" if "BULL" in strategy['name'] else "BEAR"
+        regime_name = strategy.get('name', 'TRANSITIONAL')
         
-        # Extract Strategy Settings
+        # V5: Extract Strategy Settings from regime config
         rsi_limit = strategy.get('rsi_limit', 32)
         min_stop_loss_pct = strategy.get('min_stop_loss_pct', 1.5)
+        volume_spike_mult = strategy.get('volume_spike_mult', 1.5)
+        rsi_hook_strict = strategy.get('rsi_hook_strict', True)
         
-        print(f"[ANALYZER] 🧠 Strategy: {strategy['name']} | RSI Limit: {rsi_limit} | Min SL: {min_stop_loss_pct}%")
+        print(f"[ANALYZER] 🧠 Regime: {regime_name} | RSI≤{rsi_limit} | VolSpike≥{volume_spike_mult}x | SL: {min_stop_loss_pct}%")
         
         result = AnalysisResult(symbol=symbol, is_buy_signal=False)
         
