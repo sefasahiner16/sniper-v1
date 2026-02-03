@@ -11,7 +11,7 @@ from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
 # Get bot version from environment
 def get_version_label() -> str:
     """Get the version label for messages."""
-    version = os.getenv("BOT_VERSION", "V4.1")
+    version = os.getenv("BOT_VERSION", "V5")
     return version
 
 
@@ -43,7 +43,7 @@ def send_message(text: str) -> bool:
         return False
 
 
-def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float) -> bool:
+def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float, regime: str = None) -> bool:
     """
     Send notification when entering a position.
     
@@ -52,16 +52,27 @@ def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float) 
         price: Entry price
         take_profit: Target price
         stop_loss: Stop loss price
+        regime: Current market regime (V5)
     """
     version = get_version_label()
     tp_pct = ((take_profit - price) / price) * 100
     sl_pct = ((stop_loss - price) / price) * 100
     
+    # V5: Regime emoji mapping
+    regime_emoji = {
+        "QUIET": "🌙",
+        "TRANSITIONAL": "🔄",
+        "TRENDING": "🚀",
+        "FAKE_NO_TRADE": "⚠️"
+    }.get(regime, "❓")
+    
+    regime_text = f"\n📈 *Regime:* {regime_emoji} {regime or 'UNKNOWN'}" if regime else ""
+    
     message = f"""
 🟢 *[{version}] BUY SIGNAL EXECUTED*
 
 📊 *Symbol:* `{symbol}`
-💰 *Entry Price:* ${price:.6f}
+💰 *Entry Price:* ${price:.6f}{regime_text}
 
 🎯 *Take Profit:* ${take_profit:.6f} (+{tp_pct:.2f}%)
 🛑 *Stop Loss:* ${stop_loss:.6f} ({sl_pct:.2f}%)

@@ -223,8 +223,15 @@ class SniperSlot:
             )
         except Exception as e:
             print(f"{self.get_slot_name()} ⚠️ Logging failed: {e}")
+        
+        # V5: Get current regime for notification
+        try:
+            strategy = self.scanner.get_active_strategy()
+            current_regime = strategy.get('name', 'UNKNOWN')
+        except:
+            current_regime = 'UNKNOWN'
             
-        notify_buy(symbol, price, analysis.take_profit, analysis.stop_loss)
+        notify_buy(symbol, price, analysis.take_profit, analysis.stop_loss, regime=current_regime)
         
         return True
     
