@@ -860,55 +860,55 @@ class Analyzer:
         if not layer4_ok:
             result.rejection_reason = "Layer 4: Volume too low"
             return result
+        
+        # V3: Check volume capitulation
+        is_capitulation, cap_ratio = self.check_capitulation(technicals)
+        result.capitulation_ok = is_capitulation
+        result.capitulation_volume_ratio = cap_ratio
+        
+        # V3: Multi-timeframe confirmation
+        multi_tf_ok, confirm_rsi = self.check_multi_timeframe(symbol)
+        result.multi_tf_ok = multi_tf_ok
+        result.confirm_rsi = confirm_rsi
+        
+        if not multi_tf_ok:
+            result.rejection_reason = f"Multi-TF: 15m RSI too high ({confirm_rsi:.1f})"
+            return result
+        
+        # Layer 5: ATR Targets
+        if result.price and result.atr:
+            take_profit, stop_loss = self.calculate_layer5_targets(
+                result.price, result.atr,
+                min_stop_loss_pct_override=min_stop_loss_pct
+            )
             
-            # V3: Check volume capitulation
-            is_capitulation, cap_ratio = self.check_capitulation(technicals)
-            result.capitulation_ok = is_capitulation
-            result.capitulation_volume_ratio = cap_ratio
-            
-            # V3: Multi-timeframe confirmation
-            multi_tf_ok, confirm_rsi = self.check_multi_timeframe(symbol)
-            result.multi_tf_ok = multi_tf_ok
-            result.confirm_rsi = confirm_rsi
-            
-            if not multi_tf_ok:
-                result.rejection_reason = f"Multi-TF: 15m RSI too high ({confirm_rsi:.1f})"
+            # V3: Check if targets are valid (non-zero)
+            if take_profit == 0 or stop_loss == 0:
+                result.rejection_reason = "Layer 5: Profit potential too low (Noise Filter)"
                 return result
-            
-            # Layer 5: ATR Targets
-            if result.price and result.atr:
-                take_profit, stop_loss = self.calculate_layer5_targets(
-                    result.price, result.atr,
-                    min_stop_loss_pct_override=min_stop_loss_pct
-                )
                 
-                # V3: Check if targets are valid (non-zero)
-                if take_profit == 0 or stop_loss == 0:
-                    result.rejection_reason = "Layer 5: Profit potential too low (Noise Filter)"
-                    return result
-                    
-                result.take_profit = take_profit
-                result.stop_loss = stop_loss
-                result.layer5_targets_set = True
-            else:
-                result.rejection_reason = "Layer 5: Could not calculate targets"
-                return result
-            
-            # All layers passed in Bear Mode!
-            result.is_buy_signal = True
-            
-            # Build status string
-            extras = []
-            if rsi_hook_triggered:
-                extras.append("RSI Hook")
-            if is_capitulation:
-                extras.append("CAPITULATION")
-            if multi_tf_ok and confirm_rsi:
-                extras.append("Multi-TF")
-            
-            extras_str = " + ".join(extras) if extras else ""
-            regime_str = f" [{result.market_regime}]" if result.market_regime != "UNKNOWN" else ""
-            print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{regime_str} {extras_str} for {symbol}")
+            result.take_profit = take_profit
+            result.stop_loss = stop_loss
+            result.layer5_targets_set = True
+        else:
+            result.rejection_reason = "Layer 5: Could not calculate targets"
+            return result
+        
+        # All layers passed!
+        result.is_buy_signal = True
+        
+        # Build status string
+        extras = []
+        if rsi_hook_triggered:
+            extras.append("RSI Hook")
+        if is_capitulation:
+            extras.append("CAPITULATION")
+        if multi_tf_ok and confirm_rsi:
+            extras.append("Multi-TF")
+        
+        extras_str = " + ".join(extras) if extras else ""
+        regime_str = f" [{result.market_regime}]" if result.market_regime != "UNKNOWN" else ""
+        print(f"\n🎯 [ANALYZER] ALL LAYERS PASSED - BUY SIGNAL{regime_str} {extras_str} for {symbol}")
         
         return result
 
