@@ -3,3 +3,8 @@
 __pycache__/
 .env
 *.log
+
+# Backtest Data
+backtest_results/
+data/historical/
+debug_*.log
