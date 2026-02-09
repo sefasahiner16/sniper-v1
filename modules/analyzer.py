@@ -351,7 +351,8 @@ class Analyzer:
         rsi_prev = None
         
         if RSI_HOOK_ENABLED:
-            # Calculate power from the dataframe? No, using stored method.
+            # Re-calculate RSI series to get previous value
+            # Optimization: could pass full series to analyze_technicals?
             from modules.indicators import calculate_rsi
             rsi_series = calculate_rsi(df)
             
@@ -359,52 +360,18 @@ class Analyzer:
                 rsi_prev = float(rsi_series.iloc[-2]) if pd.notna(rsi_series.iloc[-2]) else None
                 
                 if rsi_prev is not None:
-                    # RSI Hook: was below threshold, now at or above
-                    # Wait, Hook is meaningful relative to the threshold?
-                    # Or just general Hook (curling up)?
-                    # Usually Hook means crossing a specific level OR just local minima reversal.
-                    # Current logic: Was < 30, Now >= 30.
-                    # We should align this '30' with the 'rsi_threshold'.
-                    
-                    # Enhanced Hook: Check if we are hooking up from below the *Dynamic Threshold*
-                    # This makes the Hook dynamic too!
-                    rsi_hook_triggered = (rsi_prev < rsi_threshold) and (rsi >= rsi_prev) 
-                    # Wait, Hook is usually reversal. 
-                    # Original code: (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD).
-                    # RSI_HOOK_THRESHOLD was 30.
-                    
-                    # If we change limit to 40 (Bull/Rally), catching a hook at 39->41 is valid.
-                    # So we should use rsi_threshold for the hook level?
-                    # Yes, strategy alignment.
-                    
-                    # But wait, original code used RSI_HOOK_THRESHOLD constant.
-                    # If I change it to use rsi_threshold, I change behavior significantly.
-                    # Let's stick to the threshold logic:
-                    # If RSI < Limit, we are good.
-                    # Hook is an *alternative* or *confirmation*.
-                    
-                    # For now, I will keep Hook independent or loose.
-                    # Let's keep existing Hook check but maybe log it?
-                    # Actually, let's just stick to the constant `RSI_HOOK_THRESHOLD` (30) for the *Hook* specific event, 
-                    # BUT `rsi_threshold` (Dynamic) for the Level check.
-                    
-                    # Original logic was:
-                    # rsi_hook_triggered = (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD)
-                    pass
-                    
-        # ... (rest of function) ... logic needs to be careful with indentation/return
-        
-        # To avoid complex partial replacement issues with indentation, 
-        # I will just invoke the rest of the logic or rely on the tool to replace the block.
-        # But I need to provide the *whole* block up to return to be safe, 
-        # or rewrite the logic part.
-        
-        # Let's rewrite the logic part clearly.
-        
-        if RSI_HOOK_ENABLED and isinstance(rsi_prev, float): # safer check
-             rsi_hook_triggered = (rsi_prev < RSI_HOOK_THRESHOLD) and (rsi >= RSI_HOOK_THRESHOLD)
-             if rsi_hook_triggered:
-                 print(f"[ANALYZER] 🪝 RSI Hook triggered: {rsi_prev:.1f} → {rsi:.1f}")
+                     # V4.3 Fix: Adaptive Hook Logic
+                     # If Threshold is high (e.g. 50 for Bull), Buy the Dip (Uptick within dip).
+                     # If Threshold is low (e.g. 30 for Bear), Wait for Confirmation (Crossover out of oversold).
+                     if rsi_threshold >= 45:
+                         # Bull Mode: Catch the turn up even if still below 50
+                         rsi_hook_triggered = (rsi_prev < rsi_threshold) and (rsi > rsi_prev)
+                     else:
+                         # Bear Mode: Wait for breakdown recovery
+                         rsi_hook_triggered = (rsi_prev < rsi_threshold) and (rsi >= rsi_threshold)
+                     
+                     if rsi_hook_triggered:
+                         print(f"[ANALYZER] 🪝 RSI Hook triggered: {rsi_prev:.1f} → {rsi:.1f} (Threshold {rsi_threshold})")
 
         technicals['rsi_prev'] = rsi_prev
         
@@ -814,52 +781,84 @@ class Analyzer:
         
         # Layer 3: Technical Confluence (RSI + BB + Hook)
         
-        # V4 Override: Use strategy.rsi_limit instead of constants
-        effective_rsi_threshold = rsi_limit
-        
-        # Pass dynamic threshold to check_layer3
-        # Note: check_layer3_technical usually uses constants. 
-        # We will modify it to accept an override OR we just do the check here manually?
-        # Cleaner to modify check_layer3_technical signature? 
-        # Or just patch the constant? No.
-        # Let's check check_layer3_technical again. It accepts 'market_regime' but uses global constants.
-        
-        # Actually, let's just inline the check or update check_layer3_technical.
-        # Updating check_layer3_technical is better.
-        # But for now, let's call it and then OVERRIDE the result if needed?
-        # No, check_layer3 returns passed/failed based on constants.
-        
-        # START MODIFICATION: We will update check_layer3_technical signature in a moment.
-        # For this chunk, I will assume check_layer3_technical takes an optional 'rsi_limit_override'.
-        
-        layer3_ok, technicals_updated, rsi_hook_triggered, used_threshold = self.check_layer3_technical(
-            df, 
-            market_regime=result.market_regime,
-            rsi_limit_override=rsi_limit
-        )
-        
-        result.layer3_technical_ok = layer3_ok
-        result.rsi = technicals_updated.get('rsi')
-        result.rsi_prev = technicals_updated.get('rsi_prev')
-        result.bb_lower = technicals_updated.get('bb_lower')
-        result.rsi_hook_ok = rsi_hook_triggered
-        result.effective_rsi_threshold = used_threshold
-        
-        if not layer3_ok:
-            # V4.2: Fix misleading rejection message
-            if RSI_HOOK_STRICT and not rsi_hook_triggered:
-                result.rejection_reason = f"Layer 3: RSI Hook not triggered (RSI {result.rsi:.1f}, need reversal)"
+        if regime_name == "TRENDING":
+            # V4: Bull Mode (Hybrid: Breakout OR Dip Buy)
+            
+            # 1. Check Breakout (Momentum)
+            bk_ok, bk_tech, rsi_bk, prc_bk = self.check_layer3_bull_technical(df)
+            
+            if bk_ok:
+                layer3_ok = True
+                result.bull_mode_active = True
+                result.rsi_breakout_ok = rsi_bk
+                result.price_breakout_ok = prc_bk
+                result.rsi = bk_tech.get('rsi')
+                result.highest_high = bk_tech.get('highest_high')
+                technicals_updated = bk_tech
+                
+                print(f"[ANALYZER] 🐂 Bull Breakout Triggered! RSI {result.rsi:.2f}")
+
             else:
-                result.rejection_reason = f"Layer 3: Technicals (RSI {result.rsi:.1f} >= {used_threshold})"
-            return result
+                # 2. Fallback to Dip Buy (Standard Technicals)
+                # Uses strategy.rsi_limit (e.g. 50)
+                # This catches pullbacks in the trend
+                effective_rsi_threshold = rsi_limit
+                
+                layer3_ok, technicals_updated, rsi_hook_triggered, used_threshold = self.check_layer3_technical(
+                    df, 
+                    market_regime=result.market_regime,
+                    rsi_limit_override=rsi_limit
+                )
+                
+                result.rsi = technicals_updated.get('rsi')
+                result.rsi_prev = technicals_updated.get('rsi_prev')
+                result.bb_lower = technicals_updated.get('bb_lower')
+                result.rsi_hook_ok = rsi_hook_triggered
+                result.effective_rsi_threshold = used_threshold
+                
+                if not layer3_ok:
+                     result.rejection_reason = "Layer 3: Bull Breakout & Dip Buy conditions failed"
+                     return result
+                else:
+                     result.bull_mode_active = True
+                     print(f"[ANALYZER] 🐂 Bull Dip Buy Triggered! RSI {result.rsi:.2f} < {used_threshold}")
+
+        else:
+            # Standard Mean Reversion Logic (Same as before)
+            # V4 Override: Use strategy.rsi_limit instead of constants
+            effective_rsi_threshold = rsi_limit
+            
+            # Pass dynamic threshold to check_layer3
+            layer3_ok, technicals_updated, rsi_hook_triggered, used_threshold = self.check_layer3_technical(
+                df, 
+                market_regime=result.market_regime,
+                rsi_limit_override=rsi_limit
+            )
+            
+            result.layer3_technical_ok = layer3_ok
+            result.rsi = technicals_updated.get('rsi')
+            result.rsi_prev = technicals_updated.get('rsi_prev')
+            result.bb_lower = technicals_updated.get('bb_lower')
+            result.rsi_hook_ok = rsi_hook_triggered
+            result.effective_rsi_threshold = used_threshold
+            
+            if not layer3_ok:
+                # V4.2: Fix misleading rejection message
+                if RSI_HOOK_STRICT and not rsi_hook_triggered:
+                    result.rejection_reason = f"Layer 3: RSI Hook not triggered (RSI {result.rsi:.1f}, need reversal)"
+                else:
+                    result.rejection_reason = f"Layer 3: Technicals (RSI {result.rsi:.1f} >= {used_threshold})"
+                return result
+        
+        result.layer3_technical_ok = True
         
         # Layer 4: Volume Validation
-        layer4_ok, volume_ratio = self.check_layer4_volume(technicals)
+        layer4_ok, volume_ratio = self.check_layer4_volume(technicals, volume_spike_override=volume_spike_mult)
         result.layer4_volume_ok = layer4_ok
         result.volume_ratio = volume_ratio
         
         if not layer4_ok:
-            result.rejection_reason = "Layer 4: Volume too low"
+            result.rejection_reason = f"Layer 4: Volume too low ({volume_ratio:.2f} < {volume_spike_mult})"
             return result
         
         # V3: Check volume capitulation

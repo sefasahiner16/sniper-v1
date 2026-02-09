@@ -114,6 +114,11 @@ RSI_HOOK_ENABLED = True
 RSI_HOOK_STRICT = True  # ENABLED: Wait for curl up (Prevents falling knives)
 RSI_HOOK_THRESHOLD = 30  # EARLIER ENTRY: Adjusted to 30 (was 32)
 
+# V5: BBW Filter (Horizontal Market Avoidance)
+# Reject trades if Bollinger Band Width < 0.05 (5%) - Market is too tight/choppy
+BBW_FILTER_ENABLED = True
+MIN_BB_WIDTH = 0.05
+
 # =============================================================================
 # Layer 4: Volume Validation
 # =============================================================================
@@ -228,7 +233,7 @@ STRATEGY_MAP = {
     "BULL_WEEKDAY": {
         "min_volume": 1500000,
         "timeout_minutes": 120,
-        "rsi_limit": 40,  # Buy earlier (Dip Buy)
+        "rsi_limit": 50,  # RELAXED: Buy earlier (Dip Buy) - Was 40
         "min_stop_loss_pct": 2.5,  # Widen Stop
         "slots_factor": 1.0,
     },
@@ -345,9 +350,9 @@ REGIME_CONFIG = {
         "allow_trades": True,
     },
     "TRENDING": {
-        "rsi_oversold": 40,
+        "rsi_oversold": 50, # RELAXED: Catch shallower dips
         "rsi_hook_strict": False,    # Relaxed - let momentum enter
-        "volume_spike_mult": 1.2,
+        "volume_spike_mult": 1.0,
         "max_slots_factor": 1.0,     # 100% of max slots
         "min_expected_profit": 1.5,
         "allow_trades": True,

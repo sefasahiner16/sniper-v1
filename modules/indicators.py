@@ -7,7 +7,7 @@ Wrapper functions for technical analysis indicators using the 'ta' library.
 import pandas as pd
 from ta.momentum import RSIIndicator
 from ta.volatility import BollingerBands, AverageTrueRange
-from ta.trend import SMAIndicator
+from ta.trend import SMAIndicator, ADXIndicator
 from typing import Dict, Tuple
 
 from config.settings import (
@@ -78,6 +78,44 @@ def calculate_volume_ma(df: pd.DataFrame, period: int = VOLUME_MA_PERIOD) -> pd.
     """
     sma = SMAIndicator(close=df['volume'], window=period)
     return sma.sma_indicator()
+
+
+def calculate_adx(df: pd.DataFrame, period: int = 14) -> pd.Series:
+    """
+    Calculate Average Directional Index (ADX).
+    
+    Args:
+        df: DataFrame with 'high', 'low', 'close' columns
+        period: ADX period
+        
+    Returns:
+        Series of ADX values
+    """
+    adx_ind = ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=period)
+    return adx_ind.adx()
+
+
+def calculate_bbw(df: pd.DataFrame, period: int = 20, std: int = 2) -> pd.Series:
+    """
+    Calculate Bollinger Band Width.
+    Width = (Upper - Lower) / Middle
+    
+    Args:
+        df: DataFrame with 'close' column
+        period: BB period
+        std: Standard deviation
+        
+    Returns:
+        Series of BBW values
+    """
+    indicator_bb = BollingerBands(close=df['close'], window=period, window_dev=std)
+    upper = indicator_bb.bollinger_hband()
+    lower = indicator_bb.bollinger_lband()
+    middle = indicator_bb.bollinger_mavg()
+    
+    # Avoid division by zero
+    bbw = (upper - lower) / middle
+    return bbw
 
 
 def calculate_highest_high(df: pd.DataFrame, period: int = 20) -> pd.Series:

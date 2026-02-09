@@ -1,278 +1,319 @@
-# Sniper V4.1 — Complete Operational Manual
+# Sniper V5 — Complete Technical Manual
 
-**Version**: 4.1  
-**Last Updated**: February 2, 2026  
-**Strategy**: Multi-State Adaptive Mean-Reversion Trading System
+**Version**: 5.0  
+**Last Updated**: February 3, 2026  
+**Strategy**: Layered Trading System with Automatic Market Regime Detection
 
 ---
 
 ## Table of Contents
 1. [Overview](#1-overview)
-2. [Architecture](#2-architecture)
-3. [Market Regimes & Strategies](#3-market-regimes--strategies)
-4. [Entry Logic: The 6-Layer Filter](#4-entry-logic-the-6-layer-filter)
-5. [Exit Logic: Dual-Stage Ratchet](#5-exit-logic-dual-stage-ratchet)
-6. [Risk Management](#6-risk-management)
-7. [Capital Management](#7-capital-management)
-8. [V4.1 Enhancements](#8-v41-enhancements)
-9. [Configuration Reference](#9-configuration-reference)
-10. [Telegram Notifications](#10-telegram-notifications)
-11. [Deployment](#11-deployment)
-12. [Troubleshooting](#12-troubleshooting)
+2. [Architecture: The Layered Trading Philosophy](#2-architecture)
+3. [Automatic Market Regime System](#3-market-regime-system)
+4. [Entry Logic: The 6-Layer Filter](#4-entry-logic)
+5. [Exit Logic: Winner Protection](#5-exit-logic)
+6. [The Handler: Capital Authority](#6-the-handler)
+7. [Risk Management](#7-risk-management)
+8. [Configuration Reference](#8-configuration-reference)
+9. [Telegram Notifications](#9-telegram-notifications)
+10. [Deployment](#10-deployment)
 
 ---
 
 ## 1. Overview
 
-### What is Sniper V4.1?
-
-Sniper V4.1 is an automated cryptocurrency trading bot designed for **mean-reversion trading** on the MEXC exchange. It identifies oversold altcoins, waits for reversal confirmation, then enters positions with strict risk management.
-
 ### Core Philosophy
+
+**Risk is allowed to be created, but loss is not allowed to compound.**
 
 | Principle | Implementation |
 |-----------|----------------|
-| **Small Losses** | Tight ATR-based stop losses (~2%) |
-| **Unlimited Upside** | 10x ATR take profit target with trailing stop |
-| **Safety First** | 6-layer entry filter + server-side stop orders |
-| **Adaptive** | 4 different strategies based on market conditions |
+| **Asymmetric Returns** | Winners run (3.5% trail), Losers cut fast (1.5%) |
+| **Capital Authority** | Handler layer has final veto on all trades |
+| **Regime Adaptive** | 4 market states with different parameters |
+| **Layered Responsibility** | Watchtower creates, Scanner qualifies, Handler approves |
 
-### Key Features
+### What's New in V5
 
-- 🎯 **Multi-Slot Trading**: Up to 20 concurrent positions
-- 🦎 **Chameleon Mode**: Adapts to Bull/Bear markets
-- 🪝 **RSI Hook**: Buys reversals, not falling knives
-- 🧟 **Zombie Filter**: Avoids illiquid coins
-- 🚨 **Kill Switch**: Auto-pauses on BTC flash crashes
-- 📦 **The Vault**: BTC treasury for profits
-
-**V4.1 Enhancements:**
-- ⚡ **BTC Volatility Filter**: Reduces slots by 50% during high volatility
-- 🔓 **Conditional RSI Hook Relaxation**: Captures V-shaped reversals in bull markets
-- 📐 **ATR-Based Trailing Stop**: Adaptive trailing distance
-- ⏱️ **Time-Exit Extension**: Extends timeout for healthy trades
-- 🛡️ **Sector Caps**: Limits correlated positions (MEME: 4, L1/L2: 5)
-- 📉 **Daily Drawdown Guard**: Pauses at -3% daily loss
+| Feature | Description |
+|---------|-------------|
+| 🎯 **4-Regime System** | QUIET, TRANSITIONAL, TRENDING, FAKE_NO_TRADE |
+| 🔒 **Handler Layer** | Capital authority with final approval |
+| 🏆 **Winner Protection** | Asymmetric exits for winning trades |
+| 💰 **Profit Locking** | Lock 50% of gains after +5% daily |
+| 📊 **Risk Budgets** | Daily -3%, Weekly -8%, Drawdown -15% limits |
 
 ---
 
 ## 2. Architecture
 
-### System Components
+### The Layered Trading Philosophy
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                        MAIN.PY                              │
-│                    (Entry Point)                            │
-└─────────────────────┬───────────────────────────────────────┘
-                      │
-          ┌───────────▼───────────┐
-          │     DISPATCHER        │
-          │  (Multi-Slot Manager) │
-          └───────────┬───────────┘
-                      │
-     ┌────────────────┼────────────────┐
-     │                │                │
-┌────▼────┐    ┌──────▼──────┐   ┌─────▼─────┐
-│WATCHTOWER│    │ SNIPER SLOT │   │  VAULT    │
-│(Scanner) │    │ (x1 to x20) │   │ MANAGER   │
-└────┬────┘    └──────┬──────┘   └───────────┘
-     │                │
-     │         ┌──────▼──────┐
-     └─────────► ANALYZER    │
-               │ (5-Layer)   │
-               └──────┬──────┘
-                      │
-               ┌──────▼──────┐
-               │  EXECUTOR   │
-               │(Trade Mgmt) │
-               └─────────────┘
+│              LAYER 1: WATCHTOWER (Opportunity)              │
+│  • Finds ALL candidates without safety filtering             │
+│  • Risk creation is intentional at this stage                │
+│  • Missing opportunities is worse than bad candidates        │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ Candidates
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                LAYER 2: SCANNER (Qualification)             │
+│  • Converts opportunity into bounded, measurable risk       │
+│  • Answers: "If wrong, how wrong can it be?"                 │
+│  • Cannot force execution                                    │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ Trade Intents
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                 LAYER 3: HANDLER (Authority)                │
+│  • Final veto power on ALL executions                       │
+│  • Risk budgets, profit locking, winner protection          │
+│  • Handler decisions override all other layers              │
+└─────────────────────────┬───────────────────────────────────┘
+                          │ APPROVE / DENY
+                          ▼
+┌─────────────────────────────────────────────────────────────┐
+│                      EXECUTOR                               │
+│  • Manages position lifecycle                               │
+│  • Applies asymmetric exit rules                            │
+└─────────────────────────────────────────────────────────────┘
 ```
 
-### Module Descriptions
-
-| Module | File | Purpose |
-|--------|------|---------|
-| **Scanner** | `modules/scanner.py` | Fetches market data, filters candidates, detects market regime |
-| **Analyzer** | `modules/analyzer.py` | Runs 6-layer filter, calculates entry/exit levels |
-| **Executor** | `modules/executor.py` | Manages position lifecycle, trailing stops |
-| **Dispatcher** | `modules/dispatcher.py` | Orchestrates multiple slots (V3+ only) |
-| **Capital Manager** | `modules/capital_manager.py` | Slot sizing, dead hours, kill switch, vault |
-| **Indicators** | `modules/indicators.py` | RSI, Bollinger Bands, ATR calculations |
+**Authority Flow**: Watchtower → Scanner → Handler (one-directional, never reverse)
 
 ---
 
-## 3. Market Regimes & Strategies
+## 3. Market Regime System
 
-### How Market Regime is Detected
+### How Regime is Detected
 
-The bot classifies the market using Bitcoin data:
+Three independent dimensions are evaluated on the **15-minute timeframe**:
+
+#### A. Volatility (Normalized ATR)
 
 ```
-BULL Market = (BTC Price > 50-day SMA) AND (BTC Daily RSI > 50)
-BEAR Market = Everything else
+Normalized_ATR = Current_ATR(14) / Average_ATR(7-day)
 ```
 
-### The 4-State Strategy Map
+| State | Condition | Meaning |
+|-------|-----------|---------|
+| LOW | < 0.8 | Quiet market, small moves |
+| MEDIUM | 0.8 - 1.3 | Normal volatility |
+| HIGH | > 1.3 | Elevated volatility |
+| EXTREME | > 2.0 | Dangerous volatility |
 
-| State | Conditions | Strategy Name | Description |
-|-------|------------|---------------|-------------|
-| **BEAR_WEEKDAY** | BTC < SMA50 + Mon-Fri | "Sniper" | Strict scalping |
-| **BEAR_WEEKEND** | BTC < SMA50 + Sat-Sun | "Bunker" | Ultra-defensive |
-| **BULL_WEEKDAY** | BTC > SMA50 + Mon-Fri | "Rally" | Dip buying |
-| **BULL_WEEKEND** | BTC > SMA50 + Sat-Sun | "Volatility" | Wide stops |
+#### B. Momentum (EMA Slope)
 
-### Strategy Parameters
+```
+Slope = (EMA_now - EMA_10_bars_ago) / EMA_10_bars_ago × 100
+```
 
-| Parameter | Sniper | Bunker | Rally | Volatility |
-|-----------|--------|--------|-------|------------|
-| Min Volume | $2M | $5M | $1.5M | $1M |
-| RSI Limit | 32 | 28 | 40 | 35 |
-| Timeout | 45 min | 90 min | 120 min | 180 min |
-| Min Stop Loss | 1.5% | 1.5% | 2.5% | 3.0% |
-| Slots Factor | 100% | 50% | 100% | 100% |
+| State | Condition | Meaning |
+|-------|-----------|---------|
+| WEAK | |slope| < 0.15% | No directional bias |
+| MODERATE | 0.15% - 0.35% | Mild trend |
+| STRONG | > 0.35% | Clear momentum |
+
+#### C. Market Breadth
+
+```
+Breadth = % of top 50 coins with 15m return > +0.3%
+```
+
+| State | Condition | Meaning |
+|-------|-----------|---------|
+| WEAK | < 20% positive | Bear market |
+| MODERATE | 20% - 40% positive | Mixed market |
+| STRONG | > 40% positive | Bull market |
+
+### The 4 Regimes
+
+| Regime | Conditions | Intent | Slots |
+|--------|------------|--------|-------|
+| 🌙 **QUIET** | Low vol + Weak momentum | Capital preservation | 35% |
+| 🔄 **TRANSITIONAL** | Medium vol + Moderate signals | Selective participation | 65% |
+| 🚀 **TRENDING** | High vol + Strong mom + Strong breadth | Profit concentration | 100% |
+| ⚠️ **FAKE_NO_TRADE** | High vol + Weak momentum | Avoid stop-hunts | 0% |
+
+### Per-Regime Parameters
+
+| Parameter | QUIET | TRANSITIONAL | TRENDING | FAKE |
+|-----------|-------|--------------|----------|------|
+| **RSI Threshold** | ≤30 | ≤34 | ≤40 | ≤25 |
+| **RSI Hook Strict** | Yes | Yes | No | Yes |
+| **Volume Spike** | 1.8x | 1.5x | 1.2x | 2.5x |
+| **Stop Loss** | 1.5% | 2.0% | 2.5% | 1.2% |
+| **Trailing Distance** | 1.5% | 2.0% | 3.0% | 1.0% |
+| **Time Exit** | 30 min | 45 min | 90 min | 15 min |
+| **Allow Trades** | ✅ | ✅ | ✅ | ❌ |
 
 ---
 
-## 4. Entry Logic: The 6-Layer Filter
+## 4. Entry Logic
 
-Every trade must pass **ALL layers** before execution:
+### The 6-Layer Filter
 
-### Layer 0: Pre-Filters
+Every trade must pass **ALL layers**:
+
+#### Layer 0: Pre-Filters
 
 | Filter | Rule | Purpose |
 |--------|------|---------|
-| **Cooldown** | Cannot re-buy same coin for 60 min after ANY sale | Prevents revenge trading |
-| **Blacklist** | Coin banned for 24h after 2 losses in 24h | Avoids "cursed" coins |
-| **Dead Hours** | No new trades 03:00-06:00 UTC | Avoids low liquidity periods |
-| **Kill Switch** | Trading paused if BTC drops 3%+ in 1 hour | Flash crash protection |
+| **Handler Approval** | Check risk budgets | Capital protection |
+| **Regime Check** | Not FAKE_NO_TRADE | Avoid stop-hunts |
+| **Cooldown** | 60 min after selling | Prevent revenge trading |
+| **Blacklist** | 24h ban after 2 losses | Avoid cursed coins |
+| **Kill Switch** | Not active | BTC crash protection |
 
-### Layer 1: BTC Sentiment
-
-```
-PASS if: BTC 15-minute change > -0.5%
-```
-
-**Purpose**: Don't buy altcoins when BTC is bleeding.
-
-### Layer 2: Order Book Analysis
+#### Layer 1: BTC Sentiment
 
 ```
-PASS if: (Total Bid Volume / Total Ask Volume) >= 1.0
+PASS if: BTC 15-min change > -0.5%
 ```
 
-**Purpose**: Confirms buying pressure exists.
-
-### Layer 3: Technical Confluence
-
-**Indicators Used**:
-- RSI (14-period)
-- Bollinger Bands (20-period, 2 std dev)
-
-**RSI Hook Logic** (when `RSI_HOOK_STRICT = True`):
-```
-PASS if: (Previous RSI < 32) AND (Current RSI >= Previous RSI)
-```
-
-This means the RSI must:
-1. Have been below the threshold
-2. Now be curling back UP (reversal confirmation)
-
-> ⚠️ **Why you might not see trades**: With RSI Hook STRICT enabled, the bot won't buy during a straight-line dip. It waits for the "hook" pattern showing reversal.
-
-### Layer 4: Volume Validation
+#### Layer 2: Order Book
 
 ```
-PASS if: Current Volume >= 1.5x Average Volume (20-period)
+PASS if: Bid Volume / Ask Volume >= 1.0
 ```
 
-**Purpose**: Confirms momentum/capitulation selling.
+#### Layer 3: Technical Confluence
 
-### Layer 5: Multi-Timeframe Confirmation
+**RSI Hook Logic** (regime-specific):
+```
+if regime.rsi_hook_strict:
+    PASS if: (Previous RSI < threshold) AND (Current RSI >= Previous RSI)
+else:
+    PASS if: RSI < threshold  # TRENDING allows easier entry
+```
+
+| Regime | RSI Threshold | Hook Required? |
+|--------|---------------|----------------|
+| QUIET | 30 | Yes |
+| TRANSITIONAL | 34 | Yes |
+| TRENDING | 40 | No |
+
+#### Layer 4: Volume Validation (Regime-Specific)
+
+```
+PASS if: Current Volume >= regime.volume_spike_mult × Average Volume
+```
+
+| Regime | Required Multiplier |
+|--------|---------------------|
+| QUIET | 1.8x |
+| TRANSITIONAL | 1.5x |
+| TRENDING | 1.2x |
+
+#### Layer 5: Multi-Timeframe
 
 ```
 PASS if: 15-minute RSI <= 50
 ```
 
-**Purpose**: Ensures oversold condition exists on higher timeframe.
-
-### Layer 6: ATR Targets & Noise Filter
+#### Layer 6: ATR Targets
 
 ```
 PASS if: Calculated Take Profit >= 2.0%
 ```
 
-**Purpose**: Rejects low-volatility coins that don't offer enough upside.
+---
+
+## 5. Exit Logic: Winner Protection
+
+### The Key Asymmetry
+
+**Losers are cut fast. Winners are given room to run.**
+
+| Rule | Losers (< +1.5%) | Winners (≥ +1.5%) |
+|------|------------------|-------------------|
+| **Time Exit** | ✅ Enforced | ❌ Disabled |
+| **Trailing Activation** | 1.5% profit | 2.5% profit |
+| **Trailing Distance** | 2.0% | 3.5% |
+| **Stop Tightening** | Fast | Slow |
+
+### Exit Conditions (ANY triggers exit)
+
+#### A. Stop Loss Hit
+```
+Exit if: Current Price <= Stop Loss Price
+```
+
+#### B. Take Profit Hit
+```
+Exit if: Current Price >= Take Profit Price
+```
+
+#### C. Trailing Stop
+```
+if profit >= trailing_activation:
+    Activate trailing stop
+    trailing_stop = highest_price × (1 - trailing_distance)
+    
+Exit if: Current Price <= Trailing Stop
+```
+
+**Ratchet Rule**: Trailing stop only moves UP, never down.
+
+#### D. Time Exit (Winners Exempt)
+```
+if NOT is_winner AND position_age > time_exit_minutes AND profit < 1.0%:
+    Exit position
+```
+
+### Example Progression
+
+**Winner Trade (+5% profit):**
+| Event | Stop Level |
+|-------|------------|
+| Entry @ $1.00 | $0.975 (-2.5%) |
+| +0.8% profit | $1.001 (Break-even) |
+| +1.5% profit | Winner status 🏆 |
+| +2.5% profit | Trail activates @ $0.9925 |
+| +5.0% profit | Trail @ $1.0125 |
+| Trail hit | Exit @ ~$1.01 (+1%) |
 
 ---
 
-## 5. Exit Logic: Dual-Stage Ratchet
+## 6. The Handler: Capital Authority
 
-The bot uses a sophisticated exit system that protects capital while allowing winners to run:
+### Risk Budget Enforcement
 
-### A. Initial Hard Stop
+| Limit | Threshold | Action |
+|-------|-----------|--------|
+| **Daily Loss** | -3% | Block new trades until midnight UTC |
+| **Weekly Loss** | -8% | Block new trades |
+| **Rolling Drawdown** | -15% | Block new trades |
 
-| Setting | Value | Description |
-|---------|-------|-------------|
-| ATR Multiplier | 2.0x | Stop loss = Entry - (2.0 × ATR) |
-| Minimum | 1.5% | Never tighter than 1.5% |
-| Maximum | 2.4% | Hard catastrophe limit |
+When a limit is hit:
+- ❌ New positions blocked
+- ✅ Existing positions continue normally
+- ✅ All stops remain active
+- ✅ Watchtower/Scanner continue (for when trading resumes)
 
-### B. Stage 1: Break-Even (Capital Protection)
+### Profit Locking
 
-| Trigger | Action |
-|---------|--------|
-| +0.8% profit | Move stop to +0.1% (Entry + Fees) |
+```
+if daily_pnl >= 5%:
+    locked_capital = daily_pnl × 50%
+    // This capital cannot be re-risked today
+```
 
-**Result**: Once triggered, you cannot lose money on the trade.
+**Purpose**: Protect gains from being given back.
 
-### C. Stage 2: Wide Trailing Stop (Let Winners Run)
-
-| Trigger | Action |
-|---------|--------|
-| +1.5% profit | Activate trailing stop with 2.0% gap |
-
-**Example Progression**:
-| When Price Reaches | Trailing Stop Moves To |
-|--------------------|------------------------|
-| +1.5% | -0.5% (1.5% - 2.0% gap) |
-| +5.0% | +3.0% |
-| +10.0% | +8.0% |
-| +20.0% | +18.0% |
-
-**Ratchet Rule**: The trailing stop only moves UP, never down.
-
-### D. Take Profit Target
-
-| Setting | Value | Notes |
-|---------|-------|-------|
-| ATR Multiplier | 10.0x | Essentially unlimited |
-
-We rely on the trailing stop to exit, not a fixed take profit.
-
-### E. Time-Based Exit
+### Emergency Overrides
 
 | Trigger | Action |
 |---------|--------|
-| Position open > 45 min (strategy-dependent) AND profit < 1.0% | Exit position |
-
-**Purpose**: Don't hold stagnant trades.
+| BTC drops > 3% in 1 hour | Activate emergency mode |
+| Handler emergency mode | Deny all new trades |
+| Manual activation | Admin can trigger |
 
 ---
 
-## 6. Risk Management
-
-### Circuit Breaker
-
-| Trigger | Action | Duration |
-|---------|--------|----------|
-| 3 consecutive losses | Pause all trading | 12 hours |
-
-### BTC Flash Crash Kill Switch
-
-| Trigger | Action | Duration |
-|---------|--------|----------|
-| BTC drops > 3% in 1 hour | Emergency pause | 2 hours |
+## 7. Risk Management
 
 ### Position Sizing
 
@@ -281,108 +322,22 @@ We rely on the trailing stop to exit, not a fixed take profit.
 | $12 | 2 | $6 each |
 | $120 | 20 | $6 each |
 | $1,200 | 20 | $60 each |
-| $10,000 | 20 | $500 each (capped) |
+| $10,000 | 20 | $500 (capped) |
 
-- **Base Trade Size**: $6 minimum per slot
-- **Whale Cap**: $500 maximum per slot
-- **Max Concurrent Slots**: 20
+- **Base Trade Size**: $6 minimum
+- **Whale Cap**: $500 maximum
+- **Max Slots**: 20 (regime-adjusted)
 
----
+### Slot Adjustment by Regime
 
-## 7. Capital Management
+| Regime | Slot Factor | With 20 Max Slots |
+|--------|-------------|-------------------|
+| QUIET | 35% | 7 slots |
+| TRANSITIONAL | 65% | 13 slots |
+| TRENDING | 100% | 20 slots |
+| FAKE_NO_TRADE | 0% | 0 slots |
 
-### The Vault (BTC Treasury)
-
-When USDT balance exceeds operational cap, the bot automatically buys BTC to store profits safely.
-
-| Setting | Value | Description |
-|---------|-------|-------------|
-| Operational Cap | $10,000 | Target trading balance |
-| Overflow | 1.0x | Buy BTC when above cap |
-| Critical Level | 0.5x | Sell BTC when below 50% of cap |
-| Rebalance Hour | 00:00 UTC | Daily vault check |
-
-### Dead Hours (Shift System)
-
-| Setting | Value | Description |
-|---------|-------|-------------|
-| Start | 03:00 UTC | Trading pause begins |
-| End | 06:00 UTC | Trading resumes |
-| Pre-Buffer | 60 min | Stop new entries 1 hour before |
-
-**Purpose**: Avoid low-liquidity Asian morning session trap.
-
----
-
-## 8. V4.1 Enhancements
-
-V4.1 introduces 6 risk-safe improvements that increase stability without increasing drawdown risk.
-
-> ⚠️ **IMPORTANT**: These changes never loosen base entry filters globally. They are conditional adaptations, not permanent relaxations.
-
-### 1. BTC Volatility Filter
-
-**Problem**: Coarse market regime detection doesn't account for volatility spikes.
-
-**Solution**: Reduce slot count (not disable trading) when BTC is volatile.
-
-| Setting | Value | Description |
-|---------|-------|-------------|
-| `BTC_VOLATILITY_THRESHOLD` | 0.03 | If ATR(14)/Price > 3% |
-| `BTC_VOLATILITY_SLOT_REDUCTION` | 0.5 | Reduce slots by 50% |
-
-**NEVER**: Force-close open positions or disable trading entirely.
-
-### 2. Conditional RSI Hook Relaxation
-
-**Problem**: Strict RSI Hook can miss V-shaped reversals in strong bull markets.
-
-**Solution**: Allow bypass ONLY when ALL conditions are met:
-
-| Condition | Requirement |
-|-----------|-------------|
-| Strategy | BULL_WEEKDAY only |
-| BTC Change | 15-min change > 0 |
-| Volume | Current >= 2.5x average |
-
-**NEVER**: Disable RSI Hook globally or relax in BEAR regimes.
-
-### 3. ATR-Based Trailing Stop
-
-**Problem**: Fixed trailing distance doesn't scale with volatility.
-
-**Solution**: Adaptive trailing using ATR.
-
-```
-Trailing Stop Distance = max(1.2%, 1.5 × ATR%)
-```
-
-| Setting | Value |
-|---------|-------|
-| `ATR_TRAILING_MULTIPLIER` | 1.5 |
-| `MIN_TRAILING_STOP_PCT` | 1.2% (hard floor) |
-
-**NEVER**: Reduce trailing stop below 1.2% or remove break-even protection.
-
-### 4. Conditional Time-Exit Extension
-
-**Problem**: Some valid reversals resolve slowly.
-
-**Solution**: Extend timeout by 30 minutes IF:
-
-| Condition | Check |
-|-----------|-------|
-| Price | Above VWAP |
-| RSI | Current RSI > Entry RSI |
-| P&L | Not in loss |
-
-**NEVER**: Extend timeout for losing trades.
-
-### 5. Slot Correlation Protection (Sector Caps)
-
-**Problem**: Multiple correlated positions amplify drawdowns.
-
-**Solution**: Sector-based slot limits.
+### Sector Caps (Correlation Protection)
 
 | Sector | Max Slots |
 |--------|-----------|
@@ -391,179 +346,120 @@ Trailing Stop Distance = max(1.2%, 1.5 × ATR%)
 | L2 (Layer-2) | 5 |
 | DEFAULT | 3 |
 
-**NEVER**: Force-close trades to rebalance sectors.
+---
 
-### 6. Daily Drawdown Guard
+## 8. Configuration Reference
 
-**Problem**: Most failures occur after giving back profits on bad days.
+### Regime Detection Settings
 
-**Solution**: 
-```
-If Daily Realized PnL <= -3%
-→ Disable new entries until next UTC day
-```
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `REGIME_ATR_PERIOD` | 14 | ATR calculation period |
+| `REGIME_ATR_LOOKBACK_DAYS` | 7 | Normalization window |
+| `VOLATILITY_LOW_THRESHOLD` | 0.8 | Below = LOW |
+| `VOLATILITY_HIGH_THRESHOLD` | 1.3 | Above = HIGH |
+| `VOLATILITY_EXTREME_THRESHOLD` | 2.0 | Above = EXTREME |
+| `MOMENTUM_EMA_PERIOD` | 20 | EMA for slope calc |
+| `MOMENTUM_LOOKBACK_BARS` | 10 | Slope calculation window |
+| `MOMENTUM_WEAK_THRESHOLD` | 0.15% | Below = WEAK |
+| `MOMENTUM_STRONG_THRESHOLD` | 0.35% | Above = STRONG |
+| `BREADTH_COIN_UNIVERSE` | 50 | Top N coins |
+| `BREADTH_RETURN_THRESHOLD` | 0.3% | Positive if above |
+| `BREADTH_WEAK_THRESHOLD` | 20% | Below = WEAK |
+| `BREADTH_STRONG_THRESHOLD` | 40% | Above = STRONG |
 
-- Open positions continue to be managed normally
-- All stops remain active
-- Trading auto-resumes at midnight UTC
+### Handler Settings
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `DAILY_LOSS_LIMIT_PCT` | -3.0% | Block new trades |
+| `WEEKLY_LOSS_LIMIT_PCT` | -8.0% | Block new trades |
+| `ROLLING_DRAWDOWN_LIMIT_PCT` | -15.0% | Block new trades |
+| `PROFIT_LOCK_TRIGGER_PCT` | 5.0% | Lock profits after |
+| `PROFIT_LOCK_RATIO` | 0.5 | Lock 50% of gains |
+
+### Winner Protection Settings
+
+| Parameter | Value | Description |
+|-----------|-------|-------------|
+| `WINNER_THRESHOLD_PCT` | 1.5% | Position is "winner" if above |
+| `WINNER_TIME_EXIT_DISABLED` | True | No time exit for winners |
+| `WINNER_TRAILING_ACTIVATION_PCT` | 2.5% | Late activation for winners |
+| `WINNER_TRAILING_DISTANCE_PCT` | 3.5% | Wide trail for winners |
+
+### Base Settings (Regime may override)
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `RSI_PERIOD` | 14 | RSI calculation |
+| `RSI_OVERSOLD` | 32 | Base threshold |
+| `VOLUME_SPIKE_MULTIPLIER` | 1.5 | Base volume requirement |
+| `STOP_LOSS_ATR_MULTIPLIER` | 2.0 | SL = Entry - (2×ATR) |
+| `TAKE_PROFIT_ATR_MULTIPLIER` | 10.0 | TP = Entry + (10×ATR) |
+| `BREAK_EVEN_TRIGGER_PCT` | 0.8% | Move stop to BE |
+| `TRAILING_STOP_ACTIVATION_PCT` | 1.5% | Default activation |
+| `TRAILING_STOP_DISTANCE_PCT` | 2.0% | Default trail |
 
 ---
 
-## 9. Configuration Reference
+## 9. Telegram Notifications
 
-### Scanner Settings (`config/settings.py`)
+### Buy Notification (V5)
 
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `SCAN_INTERVAL_SECONDS` | 60 | Time between scans |
-| `MIN_24H_VOLUME_USDT` | 2,000,000 | Minimum liquidity |
-| `MIN_PRICE_CHANGE_PCT` | -15.0 | Max dip to consider |
-| `MAX_PRICE_CHANGE_PCT` | -1.5 | Min dip to consider |
-| `WATCHLIST_SIZE` | 60 | Candidates per scan |
-
-### Technical Settings
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `RSI_PERIOD` | 14 | RSI calculation period |
-| `RSI_OVERSOLD` | 32 | Base RSI threshold |
-| `RSI_HOOK_ENABLED` | True | Enable hook pattern |
-| `RSI_HOOK_STRICT` | True | Require reversal confirmation |
-| `BOLLINGER_PERIOD` | 20 | BB calculation period |
-| `BOLLINGER_STD` | 2 | BB standard deviations |
-| `ATR_PERIOD` | 14 | ATR calculation period |
-
-### Risk Settings
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `TAKE_PROFIT_ATR_MULTIPLIER` | 10.0 | TP = Entry + (10 × ATR) |
-| `STOP_LOSS_ATR_MULTIPLIER` | 2.0 | SL = Entry - (2 × ATR) |
-| `MIN_STOP_LOSS_PCT` | 1.5 | Minimum stop loss distance |
-| `HARD_STOP_LOSS_PCT` | 2.4 | Maximum catastrophe limit |
-| `MIN_TARGET_PROFIT_PCT` | 2.0 | Noise filter threshold |
-
-### Trailing Stop Settings
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `BREAK_EVEN_TRIGGER_PCT` | 0.8 | Move stop to BE at this profit |
-| `BREAK_EVEN_TARGET_PCT` | 0.1 | Stop moved to Entry + this % |
-| `TRAILING_STOP_ACTIVATION_PCT` | 1.5 | Start trailing at this profit |
-| `TRAILING_STOP_DISTANCE_PCT` | 2.0 | Trail behind price by this % |
-| `RATCHET_TRAILING_STOP` | True | Trail only moves UP |
-
-### Protection Settings
-
-| Parameter | Default | Description |
-|-----------|---------|-------------|
-| `COOLDOWN_MINUTES` | 60 | Wait after selling before re-buying |
-| `BLACKLIST_LOSSES` | 2 | Losses before 24h ban |
-| `BLACKLIST_DURATION_HOURS` | 24 | Ban duration |
-| `MAX_CONSECUTIVE_LOSSES` | 3 | Circuit breaker trigger |
-| `CIRCUIT_BREAKER_HOURS` | 12 | Pause duration |
-| `TIME_EXIT_MINUTES` | 45 | Stagnant trade timeout |
-
----
-
-## 10. Telegram Notifications
-
-### Notification Types
-
-| Event | Sample Message |
-|-------|----------------|
-| **Startup** | 🚀 Sniper V4 STARTED — PAPER Mode — Balance: $12.00 — 2 Slots |
-| **Buy Signal** | 🎯 BUY: SUI/USDT @ $1.23456 — TP: $1.36 — SL: $1.20 |
-| **Position Closed** | 💰 SOLD: SUI/USDT — Entry: $1.23 → Exit: $1.30 — P&L: +5.68% ($0.34) — Balance: $12.34 — Trades: 10 — Win Rate: 70% |
-| **Circuit Breaker** | 🚨 CIRCUIT BREAKER: 3 losses — Paused for 12 hours |
-| **Kill Switch** | 🚨 KILL SWITCH ACTIVATED — BTC dropped -3.5% in 1 hour — Paused for 2 hours |
-
-### Setup
-
-1. Create a Telegram bot via [@BotFather](https://t.me/botfather)
-2. Get your chat ID via [@userinfobot](https://t.me/userinfobot)
-3. Add to `.env`:
 ```
-TELEGRAM_BOT_TOKEN=your_bot_token
-TELEGRAM_CHAT_ID=your_chat_id
+🟢 [V5] BUY SIGNAL EXECUTED
+
+📊 Symbol: SUI/USDT
+💰 Entry Price: $1.234560
+📈 Regime: 🔄 TRANSITIONAL
+
+🎯 Take Profit: $1.360000 (+10.16%)
+🛑 Stop Loss: $1.210000 (-1.99%)
+
+⏰ Paper Trading Mode
+```
+
+### Sell Notification
+
+```
+🟢 [V5] POSITION CLOSED - WIN
+
+📊 Symbol: SUI/USDT
+📥 Entry: $1.234560
+📤 Exit: $1.300000
+
+💵 P&L: +5.30% (+$0.32)
+💰 Balance: $12.64
+📝 Reason: 📈 Trailing Stop Triggered
+
+📈 Performance:
+🏆 Win Rate: 65% (13/20)
+📉 Total Trades: 20
+
+⏰ Paper Trading Mode
 ```
 
 ---
 
-## 11. Deployment
-
-### Local Development
-
-```bash
-# Clone and setup
-git clone https://github.com/sefasahiner16/sniper-v1.git
-cd sniper-v1
-python -m venv .venv
-.venv\Scripts\activate  # Windows
-pip install -r requirements.txt
-
-# Configure
-copy .env.example .env
-# Edit .env with your API keys
-
-# Run
-python main.py --test      # Test connection
-python main.py --scan      # Single scan (no trading)
-python main.py             # Run bot (V3 multi-slot)
-python main.py --legacy    # Run bot (V2 single-slot)
-```
-
-### Railway Deployment
-
-1. Push to GitHub
-2. Create Railway project: [railway.app](https://railway.app)
-3. Link GitHub repo
-4. Add environment variables
-5. Deploy
+## 10. Deployment
 
 ### Environment Variables
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `MEXC_API_KEY` | ✅ | Your MEXC API key |
-| `MEXC_SECRET_KEY` | ✅ | Your MEXC secret |
+| `MEXC_API_KEY` | ✅ | MEXC API key |
+| `MEXC_SECRET_KEY` | ✅ | MEXC secret |
 | `TELEGRAM_BOT_TOKEN` | ❌ | Telegram notifications |
-| `TELEGRAM_CHAT_ID` | ❌ | Your Telegram chat ID |
-| `BOT_VERSION` | ❌ | v2 or v3 (default: v3) |
+| `TELEGRAM_CHAT_ID` | ❌ | Your chat ID |
+| `BOT_VERSION` | ❌ | Default: V5 |
 
----
-
-## 12. Troubleshooting
-
-### Bot Not Buying — Common Causes
-
-| Issue | Cause | Solution |
-|-------|-------|----------|
-| No dips in market | `MAX_PRICE_CHANGE_PCT = -1.5` requires coins down 1.5%+ | Wait for dips OR set to 0 |
-| RSI Hook waiting | RSI hasn't "hooked" up yet | Wait for reversal OR set `RSI_HOOK_STRICT = False` |
-| Dead hours active | 03:00-06:00 UTC | Wait until 06:00 UTC |
-| Kill switch triggered | BTC crashed recently | Wait 2 hours |
-| Circuit breaker | 3 consecutive losses | Wait 12 hours |
-| No volume | Coins don't have $2M+ volume | Normal in quiet markets |
-
-### Checking Bot Status
+### Commands
 
 ```bash
-# View market regime
-python main.py --regime
-
-# View last scan
-python main.py --scan
-
-# View performance
-python main.py --stats
+python main.py             # Run V5 multi-slot
+python main.py --test      # Test API connection
+python main.py --scan      # Single scan (no trading)
 ```
-
-### Log Files
-
-| File | Location | Contents |
-|------|----------|----------|
-| Trades | `data/trades.json` | All trade history |
 
 ---
 
@@ -571,33 +467,35 @@ python main.py --stats
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                    SNIPER V4 QUICK REF                      │
+│                    SNIPER V5 QUICK REF                      │
 ├─────────────────────────────────────────────────────────────┤
 │                                                             │
-│  ENTRY CONDITIONS (ALL must pass):                          │
-│  ✓ BTC not crashing (>-0.5% in 15min)                      │
-│  ✓ Coin down 1.5% to 15% (24h)                             │
-│  ✓ RSI < 32 AND hooking up                                  │
-│  ✓ Volume > 1.5x average                                    │
-│  ✓ 15m RSI < 50                                             │
-│  ✓ Potential profit > 2%                                    │
+│  REGIMES:                                                   │
+│  🌙 QUIET      = Low vol, weak mom → 35% slots, RSI≤30     │
+│  🔄 TRANSITIONAL = Medium → 65% slots, RSI≤34              │
+│  🚀 TRENDING   = High vol, strong all → 100% slots, RSI≤40 │
+│  ⚠️ FAKE       = High vol, weak mom → 0% slots (NO TRADE)  │
+│                                                             │
+│  HANDLER LIMITS:                                            │
+│  • Daily loss > -3% → Block new trades                      │
+│  • Weekly loss > -8% → Block new trades                     │
+│  • Drawdown > -15% → Block new trades                       │
+│  • Daily profit > +5% → Lock 50%                            │
+│                                                             │
+│  WINNER PROTECTION (if profit ≥ 1.5%):                      │
+│  🏆 No time exit                                            │
+│  🏆 Trail activates at 2.5% (not 1.5%)                      │
+│  🏆 Trail distance 3.5% (not 2.0%)                          │
 │                                                             │
 │  EXIT CONDITIONS (ANY triggers):                            │
-│  • Stop Loss hit (-2% from entry)                           │
-│  • Trailing Stop hit (after +1.5% profit)                   │
-│  • Take Profit hit (+10x ATR)                               │
-│  • Time exit (45min + < 1% profit)                          │
-│                                                             │
-│  PROTECTION:                                                │
-│  🚨 Circuit Breaker: 3 losses → 12h pause                   │
-│  🚨 Kill Switch: BTC -3% in 1h → 2h pause                   │
-│  🌙 Dead Hours: 03:00-06:00 UTC (no new trades)             │
-│  🧊 Cooldown: 60min after selling same coin                 │
-│  ☠️ Blacklist: 2 losses on coin → 24h ban                   │
+│  • Stop Loss hit                                            │
+│  • Take Profit hit                                          │
+│  • Trailing Stop hit                                        │
+│  • Time exit (45min, < 1% profit, NOT WINNER)               │
 │                                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-*Document generated: February 2, 2026*
+*Document generated: February 3, 2026*
