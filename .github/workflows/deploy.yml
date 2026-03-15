@@ -27,4 +27,4 @@ jobs:
             # 3. Restart the bot using systemctl
             # We assume your service is called 'sniper' or 'sniperbot'. 
             # Please change 'sniperbot' below to the exact name of your service!
-            sudo systemctl restart sniperbot
+            sudo systemctl restart sniper
