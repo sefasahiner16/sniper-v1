@@ -19,7 +19,7 @@ jobs:
           script: |
             # 1. Navigate to the bot's directory on the VM
             # Replace 'SniperV1' with the actual folder name on your VM if different
-            cd ~/SniperV1
+            cd ~/sniper
             
             # 2. Pull the latest code from GitHub
             git pull origin main
