@@ -700,29 +700,25 @@ class Analyzer:
         
         # V5: Dynamic Strategy Configuration from Regime System
         strategy = self.scanner.get_active_strategy()
-        regime_name = strategy.get('name', 'TRANSITIONAL')
+        regime_name = strategy.get('name', 'BEAR_WEEKDAY')
         
-        # V5: Extract Strategy Settings from regime config
+        # V4: Extract Strategy Settings
         rsi_limit = strategy.get('rsi_limit', 32)
         min_stop_loss_pct = strategy.get('min_stop_loss_pct', 1.5)
-        volume_spike_mult = strategy.get('volume_spike_mult', 1.5)
-        rsi_hook_strict = strategy.get('rsi_hook_strict', True)
+        volume_spike_mult = strategy.get('volume_spike_mult', VOLUME_SPIKE_MULTIPLIER)
         
-        print(f"[ANALYZER] 🧠 Regime: {regime_name} | RSI≤{rsi_limit} | VolSpike≥{volume_spike_mult}x | SL: {min_stop_loss_pct}%")
+        print(f"[ANALYZER] 🧠 Strategy: {regime_name} | RSI≤{rsi_limit} | SL≥{min_stop_loss_pct}%")
         
         result = AnalysisResult(symbol=symbol, is_buy_signal=False)
+        
+        
+        # Derive market regime from strategy name (avoids redundant API call)
+        result.market_regime = strategy.get('market_regime', 'UNKNOWN')
         
         # V3: Check Cooldowns & Blacklists
         if not self.check_trade_frequency_limits(symbol):
             result.rejection_reason = "Cooldown / Blacklist active"
             return result
-        
-        # V2: Get market regime for Chameleon Mode
-        if CHAMELEON_MODE_ENABLED:
-            regime, btc_price, btc_sma = self.scanner.get_market_regime()
-            result.market_regime = regime
-            if regime != "UNKNOWN":
-                print(f"[ANALYZER] 🦎 Chameleon Mode: {regime} market (BTC: ${btc_price:,.0f}, SMA50: ${btc_sma:,.0f})")
         
         # V2: Zombie Filter (Liquidity Check)
         if ZOMBIE_FILTER_ENABLED:

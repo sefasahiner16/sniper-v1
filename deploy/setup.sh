@@ -1,6 +1,6 @@
 #!/bin/bash
 # =============================================================================
-# Sniper V1 - Oracle Cloud Server Setup Script
+# Sniper V1 - Cloud Server Setup Script
 # =============================================================================
 # Run this on a fresh Ubuntu 22.04 VM to set up everything automatically.
 # Usage: bash setup.sh
@@ -36,7 +36,7 @@ pip install --upgrade pip
 pip install ccxt pandas ta python-dotenv requests
 
 # Create necessary directories
-mkdir -p config modules utils data
+mkdir -p config modules utils data logs
 
 echo "[6/6] Setup complete!"
 echo ""

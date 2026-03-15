@@ -19,7 +19,7 @@ import pandas as pd
 from typing import List, Dict, Optional, Tuple
 
 from config.settings import (
-    MEXC_API_KEY, MEXC_SECRET_KEY,
+    BYBIT_API_KEY, BYBIT_SECRET_KEY,
     MIN_24H_VOLUME_USDT, MIN_PRICE_CHANGE_PCT, MAX_PRICE_CHANGE_PCT,
     WATCHLIST_SIZE,
     ZOMBIE_FILTER_ENABLED, ZOMBIE_VOLUME_RATIO,
@@ -40,16 +40,25 @@ class Scanner:
     """Market scanner for finding trading candidates."""
     
     def __init__(self):
-        """Initialize the scanner with MEXC connection."""
-        self.exchange = ccxt.mexc({
-            'apiKey': MEXC_API_KEY,
-            'secret': MEXC_SECRET_KEY,
+        """Initialize the scanner with Bybit connection."""
+        self.exchange = ccxt.bybit({
+            'apiKey': BYBIT_API_KEY,
+            'secret': BYBIT_SECRET_KEY,
             'enableRateLimit': True,
             'options': {
-                'defaultType': 'spot'
+                'defaultType': 'spot',  # Ensure we are on Spot (Unified Account handles this)
+                'adjustForTimeDifference': True,
+                'recvWindow': 10000,  # Increased window for safety
             }
         })
         self._markets_loaded = False
+        
+        # Force time sync immediately to fix local clock drift
+        try:
+            self.exchange.load_time_difference()
+            print(f"[SCANNER] 🕒 Time Sync: Offset={self.exchange.options.get('timeDifference', 0)}ms")
+        except Exception as e:
+            print(f"[SCANNER] ⚠️ Time Sync Failed: {e}")
     
     def _ensure_markets_loaded(self) -> None:
         """Load markets if not already loaded."""
@@ -503,32 +512,33 @@ class Scanner:
 
     def get_active_strategy(self) -> dict:
         """
-        V5: Determine the active trading strategy based on new 4-regime system.
+        V4: Determine the active trading strategy based on BULL/BEAR × WEEKDAY/WEEKEND.
+        
+        Uses Chameleon Mode (BTC vs SMA50) for market direction and day-of-week for timing.
+        This is simpler and more predictable than the V5 regime detector.
         
         Returns:
-            Dictionary with strategy configuration (rsi_oversold, volume_spike_mult, etc.)
+            Dictionary with strategy configuration
         """
-        # V5: Use new regime detector
-        regime_analysis = self.get_current_regime()
-        regime_name = regime_analysis.regime.value
+        # Determine market direction (BULL/BEAR) via Chameleon Mode
+        regime, btc_price, btc_sma = self.get_market_regime()
         
-        # Get regime-specific config
-        config = REGIME_CONFIG.get(regime_name, REGIME_CONFIG["TRANSITIONAL"]).copy()
-        exit_config = REGIME_EXIT_CONFIG.get(regime_name, REGIME_EXIT_CONFIG["TRANSITIONAL"])
+        # Determine day type
+        weekend = is_weekend()
         
-        # Merge entry and exit configs
-        config.update(exit_config)
-        config['name'] = regime_name
-        config['regime_analysis'] = regime_analysis
+        # Select strategy from the 4-state map
+        if regime == "BULL":
+            strategy_key = "BULL_WEEKEND" if weekend else "BULL_WEEKDAY"
+        else:
+            strategy_key = "BEAR_WEEKEND" if weekend else "BEAR_WEEKDAY"
         
-        # Map to legacy format for compatibility
-        config['min_volume'] = MIN_24H_VOLUME_USDT  # Base volume filter
-        config['rsi_limit'] = config.get('rsi_oversold', 32)
-        config['timeout_minutes'] = config.get('time_exit_minutes', 45)
-        config['min_stop_loss_pct'] = config.get('stop_loss_pct', 2.0)
-        config['slots_factor'] = config.get('max_slots_factor', 1.0)
+        config = STRATEGY_MAP[strategy_key].copy()
+        config['name'] = strategy_key
+        config['market_regime'] = regime
+        config['btc_price'] = btc_price
+        config['btc_sma'] = btc_sma
         
-        print(f"[SCANNER] 🎯 Strategy: {regime_name} | RSI≤{config['rsi_limit']} | VolSpike≥{config.get('volume_spike_mult', 1.5)}x | Slots={config['slots_factor']*100:.0f}%")
+        print(f"[SCANNER] 🎯 Strategy: {strategy_key} | RSI≤{config['rsi_limit']} | SL≥{config['min_stop_loss_pct']}% | Slots={config['slots_factor']*100:.0f}%")
         
         return config
     
@@ -652,21 +662,20 @@ class Scanner:
             # 0.5% buffer for the limit price below the trigger
             limit_price = stop_price * 0.995
             
-            # MEXC specific params for stop order
+            # Bybit V5 Spot Conditional Order (Stop Loss)
+            # Uses 'triggerPrice' and 'orderFilter': 'StopOrder' implicitly via internal mapping or explicit params
+            
+            # For Bybit, we typically use 'triggerPrice' in params for stop orders
             params = {
-                'stopPrice': stop_price,
+                'triggerPrice': stop_price,
             }
             
-            # Note: 'stop_limit' type might vary by exchange/driver. 
-            # For MEXC Spot in CCXT, usually type='limit' with params={'stopPrice': ...} works
-            # or type='stop_limit' if fully supported.
-            # We will try standard CCXT convention.
+            print(f"[SCANNER] 🛡️ Placing Bybit STOP LIMIT: Trigger ${stop_price:.6f}, Limit ${limit_price:.6f}")
             
-            print(f"[SCANNER] 🛡️ Placing Server-Side STOP LOSS: Trigger ${stop_price:.6f}, Limit ${limit_price:.6f}")
-            
+            # Bybit requires type='limit' and params with triggerPrice to create a conditional order
             order = self.exchange.create_order(
                 symbol=symbol,
-                type='limit',  # Often passed as limit with stopPrice params for spot
+                type='limit',
                 side='sell',
                 amount=quantity,
                 price=limit_price,
@@ -690,6 +699,20 @@ class Scanner:
         except Exception as e:
             print(f"[SCANNER] ⚠️ Failed to cancel order {order_id}: {e}")
             return False
+
+    def check_order_status(self, symbol: str, order_id: str) -> Optional[str]:
+        """
+        Check the status of an order.
+        
+        Returns:
+            Status string (open, closed, canceled) or None if error
+        """
+        try:
+            order = self.exchange.fetch_order(order_id, symbol)
+            return order.get('status')
+        except Exception as e:
+            # print(f"[SCANNER] ⚠️ Failed to check order {order_id}: {e}")
+            return None
 
 # Singleton instance
 _scanner_instance = None

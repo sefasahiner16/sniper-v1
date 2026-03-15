@@ -18,10 +18,10 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # =============================================================================
-# MEXC API Configuration
+# Bybit API Configuration
 # =============================================================================
-MEXC_API_KEY = os.getenv("MEXC_API_KEY", "")
-MEXC_SECRET_KEY = os.getenv("MEXC_SECRET_KEY", "")
+BYBIT_API_KEY = os.getenv("BYBIT_API_KEY", "")
+BYBIT_SECRET_KEY = os.getenv("BYBIT_SECRET_KEY", "")
 
 # =============================================================================
 # Telegram Configuration
@@ -32,7 +32,7 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 # =============================================================================
 # Trading Mode
 # =============================================================================
-PAPER_TRADING = True  # Set to False when ready for live trading
+PAPER_TRADING = True  # FLIP TO False WHEN BYBIT IS FUNDED
 INITIAL_BALANCE = 12.0  # Starting balance for paper trading (USD)
 
 # =============================================================================
@@ -64,7 +64,7 @@ DEAD_HOURS_PRE_BUFFER_MINUTES = 60  # Stop buying this many minutes before dead 
 # =============================================================================
 # Scanner Settings
 # =============================================================================
-SCAN_INTERVAL_SECONDS = 60  # OPTIMIZED: 1 minute between scans (High Velocity)
+SCAN_INTERVAL_SECONDS = 900  # 15 minutes between scans (matches analysis timeframe, reduces noise)
 MIN_24H_VOLUME_USDT = 2000000  # HIGH LIQUIDITY: Min $2M volume (Anti-Zombie)
 MIN_PRICE_CHANGE_PCT = -15.0  # Minimum negative change (looking for dips)
 MAX_PRICE_CHANGE_PCT = -1.5   # OPTIMIZED: Catch smaller dips (was -2.0)
@@ -144,16 +144,16 @@ MIN_TARGET_PROFIT_PCT = 2.0
 BREAK_EVEN_TRIGGER_PCT = 0.8  # Move stop to BE when profit hits 0.8% (Hybrid: Safety + Fees)
 BREAK_EVEN_TARGET_PCT = 0.1   # The BE target (Entry + 0.1% to cover fees)
 
-# Stage 2: Wide Trailing Stop
-TRAILING_STOP_ACTIVATION_PCT = 1.5  # Start trailing at 1.5% profit (Hybrid: Lock in earlier)
-TRAILING_STOP_DISTANCE_PCT = 2.0    # WIDE: Trail by 2.0% (Allows volatility)
+# Stage 2: Trailing Stop
+TRAILING_STOP_ACTIVATION_PCT = 1.5  # Start trailing at 1.5% profit
+TRAILING_STOP_DISTANCE_PCT = 1.2    # Tight trail: locks profit (matched to backtest)
 
 # V2: Ratchet mode - trailing stop only moves UP, never down
 RATCHET_TRAILING_STOP = True
 
 # V2: Time-based exit (stagnant trade timeout)
-TIME_EXIT_MINUTES = 45  # Exit if no profit after this many minutes
-TIME_EXIT_MIN_PROFIT_PCT = 1.0  # Minimum profit % to stay in trade past timeout
+TIME_EXIT_MINUTES = 60  # Exit if no profit after this many minutes
+TIME_EXIT_MIN_PROFIT_PCT = 0.3  # Stay in trade if any meaningful profit
 
 HARD_STOP_LOSS_PCT = 2.4  # SAFETY: Max loss 2.4%
 
@@ -172,12 +172,12 @@ BLACKLIST_DURATION_HOURS = 24 # Duration of blacklist for "cursed" coins
 # =============================================================================
 # Timeframes
 # =============================================================================
-ANALYSIS_TIMEFRAME = "5m"  # Candle timeframe for analysis
+ANALYSIS_TIMEFRAME = "15m"  # Candle timeframe for analysis (backtested on 15m)
 OHLCV_LIMIT = 100  # Number of candles to fetch
 
 # V3: Multi-timeframe confirmation
 MULTI_TIMEFRAME_ENABLED = True
-CONFIRM_TIMEFRAME = "15m"  # Secondary timeframe for confirmation
+CONFIRM_TIMEFRAME = "1h"  # Secondary timeframe for confirmation (one level above analysis)
 MULTI_TF_RSI_THRESHOLD = 50  # RSI must be below this on confirm timeframe (Adjusted: 40 -> 50)
 
 # =============================================================================
@@ -334,10 +334,10 @@ BREADTH_STRONG_THRESHOLD = 40        # > 40% positive = STRONG
 # Per-Regime Entry Filter Configuration
 REGIME_CONFIG = {
     "QUIET": {
-        "rsi_oversold": 30,
+        "rsi_oversold": 28,          # Pickier: deeper oversold only
         "rsi_hook_strict": True,
         "volume_spike_mult": 1.8,
-        "max_slots_factor": 0.35,    # 30-40% of max slots
+        "max_slots_factor": 0.20,    # Reduced exposure in quiet markets
         "min_expected_profit": 2.5,
         "allow_trades": True,
     },
@@ -372,17 +372,17 @@ REGIME_EXIT_CONFIG = {
     "QUIET": {
         "stop_loss_pct": 1.5,
         "trailing_distance": 1.5,
-        "time_exit_minutes": 30,
+        "time_exit_minutes": 45,
     },
     "TRANSITIONAL": {
         "stop_loss_pct": 2.0,
         "trailing_distance": 2.0,
-        "time_exit_minutes": 45,
+        "time_exit_minutes": 60,
     },
     "TRENDING": {
         "stop_loss_pct": 2.5,
         "trailing_distance": 3.0,
-        "time_exit_minutes": 90,
+        "time_exit_minutes": 120,
     },
     "FAKE_NO_TRADE": {
         "stop_loss_pct": 1.2,        # Tighten aggressively
@@ -405,7 +405,7 @@ PROFIT_LOCK_TRIGGER_PCT = 5.0        # Lock profits after 5% daily gain
 PROFIT_LOCK_RATIO = 0.5              # Lock 50% of daily gains
 
 # Winner Protection (Asymmetric Exit Rules)
-WINNER_THRESHOLD_PCT = 1.5           # Position is "winner" if unrealized > 1.5%
+WINNER_THRESHOLD_PCT = 3.0           # Raised above trailing activation to prevent dead zone
 WINNER_TIME_EXIT_DISABLED = True     # Disable time exit for winners
 WINNER_TRAILING_ACTIVATION_PCT = 2.5 # Wide trailing for winners
-WINNER_TRAILING_DISTANCE_PCT = 3.5   # Let winners run with wide trail
+WINNER_TRAILING_DISTANCE_PCT = 1.5   # Tighter: lock profit, don't give it all back

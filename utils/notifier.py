@@ -6,7 +6,7 @@ Sends trade notifications to Telegram with version labels.
 
 import os
 import requests
-from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID
+from config.settings import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, PAPER_TRADING
 
 # Get bot version from environment
 def get_version_label() -> str:
@@ -43,7 +43,8 @@ def send_message(text: str) -> bool:
         return False
 
 
-def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float, regime: str = None) -> bool:
+def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float, 
+               regime: str = None, slot_id: int = None, slot_size: float = None, balance: float = None) -> bool:
     """
     Send notification when entering a position.
     
@@ -53,6 +54,9 @@ def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float, 
         take_profit: Target price
         stop_loss: Stop loss price
         regime: Current market regime (V5)
+        slot_id: Slot number making the trade
+        slot_size: Capital allocated to the slot
+        balance: Total available balance
     """
     version = get_version_label()
     tp_pct = ((take_profit - price) / price) * 100
@@ -67,24 +71,34 @@ def notify_buy(symbol: str, price: float, take_profit: float, stop_loss: float, 
     }.get(regime, "❓")
     
     regime_text = f"\n📈 *Regime:* {regime_emoji} {regime or 'UNKNOWN'}" if regime else ""
+    slot_text = f"\n🎰 *Slot:* Slot {slot_id}" if slot_id is not None else ""
     
+    balance_lines = ""
+    if balance is not None:
+        balance_lines += f"\n💰 *Total Balance:* ${balance:.2f}"
+    if slot_size is not None:
+        if balance is not None:
+            balance_lines += f" | *Slot Allocated:* ${slot_size:.2f}"
+        else:
+            balance_lines += f"\n💰 *Slot Allocated:* ${slot_size:.2f}"
+            
     message = f"""
 🟢 *[{version}] BUY SIGNAL EXECUTED*
 
 📊 *Symbol:* `{symbol}`
-💰 *Entry Price:* ${price:.6f}{regime_text}
+💵 *Entry Price:* ${price:.6f}{regime_text}{slot_text}{balance_lines}
 
 🎯 *Take Profit:* ${take_profit:.6f} (+{tp_pct:.2f}%)
 🛑 *Stop Loss:* ${stop_loss:.6f} ({sl_pct:.2f}%)
 
-⏰ _Paper Trading Mode_
+⏰ _{'Paper Trading Mode' if PAPER_TRADING else '⚡ LIVE Trading'}_
 """
     return send_message(message.strip())
 
 
 def notify_sell(symbol: str, entry_price: float, exit_price: float, 
                 pnl_pct: float, pnl_usd: float, reason: str, balance: float, 
-                stats: dict = None) -> bool:
+                stats: dict = None, slot_id: int = None, slot_size: float = None) -> bool:
     """
     Send notification when exiting a position.
     
@@ -97,6 +111,8 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
         reason: Exit reason (TP_HIT, SL_HIT, TRAILING_STOP, TIME_EXIT)
         balance: Current balance after trade
         stats: Optional performance statistics dictionary
+        slot_id: Slot number exiting the trade
+        slot_size: Original capital allocated to the slot
     """
     version = get_version_label()
     emoji = "🟢" if pnl_pct >= 0 else "🔴"
@@ -119,18 +135,25 @@ def notify_sell(symbol: str, entry_price: float, exit_price: float,
 📉 *Total Trades:* {stats.get('total_trades', 0)}
 """
     
+    slot_text = f"\n🎰 *Slot:* Slot {slot_id}" if slot_id is not None else ""
+    
+    balance_lines = f"💰 *Total Balance:* ${balance:.2f}"
+    if slot_size is not None:
+        slot_return = slot_size + pnl_usd
+        balance_lines += f" | *Slot Return:* ${slot_return:.2f}"
+        
     message = f"""
 {emoji} *[{version}] POSITION CLOSED - {win_loss}*
 
-📊 *Symbol:* `{symbol}`
+📊 *Symbol:* `{symbol}`{slot_text}
 📥 *Entry:* ${entry_price:.6f}
 📤 *Exit:* ${exit_price:.6f}
 
 💵 *P&L:* {pnl_pct:+.2f}% (${pnl_usd:+.4f})
-💰 *Balance:* ${balance:.2f}
+{balance_lines}
 📝 *Reason:* {reason_text}
 {stats_text}
-⏰ _Paper Trading Mode_
+⏰ _{'Paper Trading Mode' if PAPER_TRADING else '⚡ LIVE Trading'}_
 """
     return send_message(message.strip())
 

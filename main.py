@@ -24,7 +24,7 @@ from datetime import datetime
 
 from config.settings import (
     SCAN_INTERVAL_SECONDS, PAPER_TRADING,
-    MEXC_API_KEY, TELEGRAM_BOT_TOKEN,
+    BYBIT_API_KEY, TELEGRAM_BOT_TOKEN,
     DEAD_HOURS_ENABLED, DEAD_HOURS_START_UTC, DEAD_HOURS_END_UTC
 )
 from modules.scanner import get_scanner
@@ -39,23 +39,23 @@ from utils.notifier import send_message
 def test_connection() -> bool:
     """Test API connectivity and configuration."""
     print("\n" + "="*50)
-    print("🔌 TESTING CONNECTION (V3)")
+    print("🔌 TESTING CONNECTION (BYBIT V5)")
     print("="*50)
     
     # Check API keys
-    if not MEXC_API_KEY or MEXC_API_KEY == "your_api_key_here":
-        print("❌ MEXC API key not configured")
+    if not BYBIT_API_KEY or BYBIT_API_KEY == "your_api_key_here":
+        print("❌ Bybit API key not configured")
         print("   Edit .env file with your API credentials")
         return False
-    print("✅ MEXC API key configured")
+    print("✅ Bybit API key configured")
     
     # Test exchange connection
     scanner = get_scanner()
     try:
         balance = scanner.get_balance('USDT')
-        print(f"✅ Connected to MEXC | USDT Balance: ${balance:.4f}")
+        print(f"✅ Connected to Bybit | USDT Balance: ${balance:.4f}")
     except Exception as e:
-        print(f"❌ MEXC connection failed: {e}")
+        print(f"❌ Bybit connection failed: {e}")
         return False
     
     # Test BTC data fetch

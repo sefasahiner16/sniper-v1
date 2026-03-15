@@ -1,0 +1,37 @@
+name: Deploy to GCP VM
+
+on:
+  push:
+    branches:
+      - main # Change this if your default branch is 'master'
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Deploy via SSH to GCP VM
+        uses: appleboy/ssh-action@v1.0.3
+        with:
+          host: ${{ secrets.GCP_VM_HOST }}          # The External IP of your Google Cloud VM
+          username: ${{ secrets.GCP_VM_USERNAME }}  # Your SSH username on the VM
+          key: ${{ secrets.GCP_VM_SSH_KEY }}        # The private SSH key for the VM
+          script: |
+            # 1. Navigate to the bot's directory on the VM
+            # Replace 'SniperV1' with the actual folder name on your VM if different
+            cd ~/SniperV1
+            
+            # 2. Pull the latest code from GitHub
+            git pull origin main
+            
+            # 3. Install any new requirements (uncomment if you have a requirements.txt)
+            # pip install -r requirements.txt
+            
+            # 4. Restart the bot
+            # Replace this with exactly how you restart your bot on the server.
+            # Example if using tmux: 
+            # tmux kill-session -t sniper || true 
+            # tmux new-session -d -s sniper 'python main.py'
+            
+            # Example if using systemd:
+            # sudo systemctl restart sniperbot

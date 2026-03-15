@@ -179,12 +179,13 @@ class BacktestScanner:
 
 
 class BacktestEngine:
-    def __init__(self, symbol='BTC/USDT', start_date='2022-02-01', end_date=None):
+    def __init__(self, symbol='BTC/USDT', start_date='2022-02-01', end_date=None, output_dir=None):
         self.symbol = symbol
         self.symbol_clean = symbol.replace('/', '_')
         self.start_date = pd.to_datetime(start_date).tz_localize('UTC')
         self.end_date = pd.to_datetime(end_date).tz_localize('UTC') if end_date else pd.Timestamp.now(tz='UTC')
         self.data_dir = os.path.join('data', 'historical', self.symbol_clean)
+        self.output_dir = output_dir
         self.df = None
         
     def load_data(self):
@@ -421,17 +422,15 @@ class BacktestEngine:
                                 pnl = (tp - entry_price) / entry_price
                                 break
                                 
-                            # Check Trailing Stop (Simplified)
-                            # If profit > 1.5% and price drops 0.5% from peak... 
-                            # Logic is complex, let's stick to TP/SL for MVP
-                            # Or implement basic trailing:
-                            if max_profit > 0.02: # If > 2% profit
-                                 trail_price = entry_price * (1 + max_profit - 0.005) # Trail by 0.5%
-                                 if low <= trail_price:
-                                     outcome = "TRAIL_W"
-                                     exit_price = trail_price
-                                     pnl = (trail_price - entry_price) / entry_price
-                                     break
+                            # Check Trailing Stop (Optimized Single Trail)
+                            # Balanced for Volatility: Trigger 2.0%, Callback 1.2%
+                            if max_profit > 0.02: # 2% profit to arm
+                                trail_price = high * (1 - 0.012) # Trail by 1.2% from peak
+                                if low <= trail_price:
+                                    outcome = "TRAIL"
+                                    exit_price = trail_price
+                                    pnl = (exit_price - entry_price) / entry_price
+                                    break
 
                         if outcome == "OPEN":
                             # Force close at end
@@ -495,9 +494,16 @@ class BacktestEngine:
         df_trades['cumulative_pnl'] = df_trades['pnl'].cumsum()
         
         # Save to CSV for the user
-        df_trades.to_csv("backtest_trades.csv", index=False)
-        monthly.to_csv("backtest_monthly.csv")
-        print(f"\n[SUCCESS] Detailed data saved to 'backtest_trades.csv' and 'backtest_monthly.csv'")
+        if self.output_dir:
+            os.makedirs(self.output_dir, exist_ok=True)
+            trades_path = os.path.join(self.output_dir, "trades.csv")
+            monthly_path = os.path.join(self.output_dir, "monthly.csv")
+        else:
+            trades_path = "backtest_trades.csv"
+            monthly_path = "backtest_monthly.csv"
+        df_trades.to_csv(trades_path, index=False)
+        monthly.to_csv(monthly_path)
+        print(f"\n[SUCCESS] Detailed data saved to '{trades_path}' and '{monthly_path}'")
         print("="*50)
 
 
@@ -506,8 +512,9 @@ if __name__ == "__main__":
     parser.add_argument('--symbol', default='BTC/USDT')
     parser.add_argument('--start', default='2022-02-01')
     parser.add_argument('--end', default=None)
+    parser.add_argument('--output-dir', default=None, help='Directory to save results')
     args = parser.parse_args()
     
-    engine = BacktestEngine(args.symbol, args.start, args.end)
+    engine = BacktestEngine(args.symbol, args.start, args.end, output_dir=args.output_dir)
     if engine.load_data():
         engine.run()

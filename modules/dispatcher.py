@@ -24,13 +24,13 @@ from enum import Enum
 from config.settings import (
     SCAN_INTERVAL_SECONDS, MAX_CONCURRENT_SLOTS,
     PAPER_TRADING, INITIAL_BALANCE, BASE_TRADE_SIZE, WHALE_CAP,
-    SECTOR_CAPS_ENABLED, REGIME_CONFIG,
+    SECTOR_CAPS_ENABLED,
 )
 from modules.scanner import get_scanner
 from modules.analyzer import get_analyzer, AnalysisResult
 from modules.capital_manager import get_capital_manager
 from modules.handler import get_handler, TradeDecision
-from modules.regime_detector import MarketRegime
+# V5 regime_detector no longer used in dispatcher (simplified to V4 STRATEGY_MAP)
 from utils.notifier import send_message, notify_buy, notify_sell, notify_startup
 from utils.logger import log_trade_entry, log_trade_exit, print_performance_summary
 from utils.helpers import Timer, calculate_pnl_pct
@@ -69,7 +69,10 @@ class SlotPosition:
     entry_time: datetime = field(default_factory=datetime.now)
     timer: Timer = field(default_factory=Timer)
     # V4.1: Sector tracking
+    # V4.1: Sector tracking
     sector: str = "DEFAULT"
+    # V5: Server-side Stop Loss ID
+    server_sl_order_id: Optional[str] = None
     
     def __post_init__(self):
         self.highest_price = self.entry_price
@@ -108,7 +111,8 @@ class SniperSlot:
         """
         Check if this slot can take a new trade.
         
-        V5: Integrated Handler capital authority for final approval.
+        Checks basic guards (position, hours, drawdown, kill switch)
+        and Handler risk authority. Strategy selection happens later in analyze().
         """
         if self.position is not None:
             return False
@@ -124,14 +128,9 @@ class SniperSlot:
         if self.capital_manager.is_kill_switch_active():
             return False
         
-        # V5: Get current regime and check if trading is allowed
+        # Handler has final authority over risk budgets
         try:
-            strategy = self.scanner.get_active_strategy()
-            regime_name = strategy.get('name', 'TRANSITIONAL')
-            regime_allows = REGIME_CONFIG.get(regime_name, {}).get('allow_trades', True)
-            
-            # V5: Handler has final authority
-            decision = self.handler.approve_trade(regime_allows=regime_allows)
+            decision = self.handler.approve_trade()
             if decision != TradeDecision.APPROVED:
                 print(f"{self.get_slot_name()} ⛔ Handler blocked: {decision.value}")
                 return False
@@ -180,10 +179,34 @@ class SniperSlot:
             print(f"{self.get_slot_name()} ❌ Sector cap reached for {symbol}")
             return False
         
-        # Calculate position size
-        available = self.shared_state.get('balance', INITIAL_BALANCE)
-        slot_size = min(available / MAX_CONCURRENT_SLOTS, WHALE_CAP)
+        # Calculate position size using CapitalManager (correct slot count)
+        if PAPER_TRADING:
+            total_allocated = sum(
+                slot.allocated_capital 
+                for slot in self.shared_state.get('slots', [])
+                if slot.position is not None
+            )
+            available = self.shared_state.get('balance', INITIAL_BALANCE) - total_allocated
+        else:
+            available = self.scanner.get_balance('USDT')
+            self.shared_state['balance'] = available  # Keep in sync
+        active_positions = sum(1 for s in self.shared_state.get('slots', []) if s.position is not None)
+        slot_size = self.capital_manager.calculate_slot_size(available, active_positions)
+        if slot_size <= 0:
+            print(f"{self.get_slot_name()} ❌ No capital available for new trade")
+            return False
         quantity = slot_size / price
+        
+        # Round quantity to exchange precision (prevent order rejection)
+        try:
+            self.scanner._ensure_markets_loaded()
+            market = self.scanner.exchange.markets.get(symbol, {})
+            precision = market.get('precision', {}).get('amount')
+            if precision is not None:
+                quantity = self.scanner.exchange.amount_to_precision(symbol, quantity)
+                quantity = float(quantity)
+        except Exception:
+            quantity = float(int(quantity * 1000) / 1000)  # Fallback: 3 decimals
         
         # Create trade ID
         trade_id = f"SLOT{self.slot_id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -202,6 +225,38 @@ class SniperSlot:
             slot_id=self.slot_id,
             sector=sector
         )
+
+        # LIVE: Place market buy order
+        if not PAPER_TRADING:
+            try:
+                print(f"{self.get_slot_name()} 🚀 Placing LIVE MARKET BUY: {symbol} qty={quantity:.6f}")
+                order = self.scanner.exchange.create_market_buy_order(symbol, quantity)
+                # Update with actual filled price and quantity
+                filled_price = float(order.get('average', price))
+                filled_qty = float(order.get('filled', quantity))
+                if filled_price > 0:
+                    self.position.entry_price = filled_price
+                if filled_qty > 0:
+                    self.position.quantity = filled_qty
+                    quantity = filled_qty
+                print(f"{self.get_slot_name()} ✅ FILLED @ ${filled_price:.6f} (qty: {filled_qty:.6f})")
+            except Exception as e:
+                print(f"{self.get_slot_name()} ❌ LIVE BUY FAILED: {e}")
+                self.position = None
+                self.state = SlotState.IDLE
+                return False
+
+        # V5: Place Server-Side Stop Loss (Live Only)
+        if not PAPER_TRADING:
+            try:
+                sl_id = self.scanner.create_stop_loss_order(symbol, quantity, analysis.stop_loss)
+                if sl_id:
+                    self.position.server_sl_order_id = sl_id
+                    print(f"{self.get_slot_name()} 🛡️ Server-Side SL Placed: {sl_id} @ ${analysis.stop_loss:.6f}")
+                else:
+                    print(f"{self.get_slot_name()} ⚠️ Failed to place Server-Side SL!")
+            except Exception as e:
+                print(f"{self.get_slot_name()} ⚠️ Error placing Server-Side SL: {e}")
         self.allocated_capital = slot_size
         self.state = SlotState.IN_POSITION
         
@@ -224,14 +279,10 @@ class SniperSlot:
         except Exception as e:
             print(f"{self.get_slot_name()} ⚠️ Logging failed: {e}")
         
-        # V5: Get current regime for notification
-        try:
-            strategy = self.scanner.get_active_strategy()
-            current_regime = strategy.get('name', 'UNKNOWN')
-        except:
-            current_regime = 'UNKNOWN'
-            
-        notify_buy(symbol, price, analysis.take_profit, analysis.stop_loss, regime=current_regime)
+        # Use market regime from analysis (avoids redundant API call)
+        current_regime = analysis.market_regime or 'UNKNOWN'
+        notify_buy(symbol, price, analysis.take_profit, analysis.stop_loss, 
+                   regime=current_regime, slot_id=self.slot_id, slot_size=self.allocated_capital, balance=self.shared_state.get('balance', INITIAL_BALANCE))
         
         return True
     
@@ -253,14 +304,69 @@ class SniperSlot:
         
         print(f"{self.get_slot_name()} 🏁 EXITED: {pos.symbol} @ ${exit_price:.6f} | {reason} | P&L: {pnl_pct:+.2f}%")
         
-        # Update paper balance
-        self.shared_state['balance'] = self.shared_state.get('balance', INITIAL_BALANCE) + pnl_usd
+        # LIVE: Handle sell order
+        if not PAPER_TRADING:
+            # Check if server-side SL already sold the coins
+            server_sl_already_filled = False
+            if pos.server_sl_order_id:
+                sl_status = self.scanner.check_order_status(pos.symbol, pos.server_sl_order_id)
+                if sl_status == 'closed':
+                    server_sl_already_filled = True
+                    # Get actual fill price from the SL order
+                    try:
+                        sl_order = self.scanner.exchange.fetch_order(pos.server_sl_order_id, pos.symbol)
+                        actual_exit = float(sl_order.get('average', exit_price))
+                        if actual_exit > 0:
+                            exit_price = actual_exit
+                            pnl_pct = calculate_pnl_pct(pos.entry_price, exit_price)
+                            pnl_usd = (exit_price - pos.entry_price) * pos.quantity
+                        print(f"{self.get_slot_name()} 🛡️ Server SL filled @ ${exit_price:.6f}")
+                    except Exception:
+                        print(f"{self.get_slot_name()} 🛡️ Server SL filled (using estimated price)")
+                    pos.server_sl_order_id = None
+                else:
+                    # Cancel SL before manual sell
+                    try:
+                        self.scanner.cancel_order(pos.symbol, pos.server_sl_order_id)
+                        pos.server_sl_order_id = None
+                    except Exception:
+                        pass
+            
+            # Only place market sell if server SL didn't already sell
+            if not server_sl_already_filled:
+                try:
+                    print(f"{self.get_slot_name()} 🚨 Placing LIVE MARKET SELL: {pos.symbol} qty={pos.quantity:.6f}")
+                    sell_order = self.scanner.exchange.create_market_sell_order(pos.symbol, pos.quantity)
+                    actual_exit = float(sell_order.get('average', exit_price))
+                    if actual_exit > 0:
+                        exit_price = actual_exit
+                        pnl_pct = calculate_pnl_pct(pos.entry_price, exit_price)
+                        pnl_usd = (exit_price - pos.entry_price) * pos.quantity
+                    print(f"{self.get_slot_name()} ✅ SOLD @ ${exit_price:.6f}")
+                except Exception as e:
+                    print(f"{self.get_slot_name()} ❌ LIVE SELL FAILED: {e}")
+                    # Don't return False — position tracking must still clean up
+        
+        # Update balance
+        if PAPER_TRADING:
+            self.shared_state['balance'] = self.shared_state.get('balance', INITIAL_BALANCE) + pnl_usd
+        else:
+            # Read real balance from exchange
+            real_balance = self.scanner.get_balance('USDT')
+            self.shared_state['balance'] = real_balance
         
         # V4.1: Record PnL for daily drawdown guard
         self.capital_manager.record_trade_pnl(pnl_pct)
         
         # V4.1: Remove sector position tracking
         self.capital_manager.remove_sector_position(pos.symbol, pos.sector)
+        
+        # Cancel any remaining server SL (paper mode cleanup or edge cases)
+        if pos.server_sl_order_id:
+            try:
+                self.scanner.cancel_order(pos.symbol, pos.server_sl_order_id)
+            except Exception:
+                pass  # Already cancelled or triggered
         
         # Log and notify
         log_trade_exit(
@@ -269,7 +375,8 @@ class SniperSlot:
             exit_reason=reason,
             balance_after=self.shared_state['balance']
         )
-        notify_sell(pos.symbol, pos.entry_price, exit_price, pnl_pct, pnl_usd, reason, self.shared_state['balance'])
+        notify_sell(pos.symbol, pos.entry_price, exit_price, pnl_pct, pnl_usd, 
+                    reason, self.shared_state['balance'], slot_id=pos.slot_id, slot_size=self.allocated_capital)
         
         # Clear position
         self.position = None
@@ -294,23 +401,52 @@ class SniperSlot:
         if current_price == 0:
             return None
         
+        # V5: Server-Side SL Check (Live Only)
+        if pos.server_sl_order_id:
+            status = self.scanner.check_order_status(pos.symbol, pos.server_sl_order_id)
+            if status == 'closed':
+                await self.exit_position("SL_HIT", current_price)
+                return "SL_HIT"
+        
         # Update highest price (for ratchet trailing stop)
         if current_price > pos.highest_price:
             pos.highest_price = current_price
         
         pnl_pct = calculate_pnl_pct(pos.entry_price, current_price)
         
+        # V5: HARD STOP LOSS SAFETY (Paper & Live)
+        from config.settings import HARD_STOP_LOSS_PCT, RATCHET_TRAILING_STOP
+        if pnl_pct <= -HARD_STOP_LOSS_PCT:
+             print(f"{self.get_slot_name()} 🚨 HARD STOP HIT: {pnl_pct:.2f}% <= -{HARD_STOP_LOSS_PCT}%")
+             await self.exit_position("HARD_STOP", current_price)
+             return "HARD_STOP"
+
         # V5: Get asymmetric exit rules from Handler
         exit_rules = self.handler.get_exit_rules(pnl_pct)
         
-        from config.settings import RATCHET_TRAILING_STOP
+        # BREAK-EVEN: Move stop to +0.1% once profit hits +0.8%
+        if not pos.trailing_activated and pnl_pct >= exit_rules.break_even_trigger_pct:
+            be_price = pos.entry_price * (1 + exit_rules.break_even_target_pct / 100)
+            if be_price > pos.stop_loss:
+                old_sl = pos.stop_loss
+                pos.stop_loss = be_price
+                print(f"{self.get_slot_name()} 🔒 BE: SL ${old_sl:.6f} → ${be_price:.6f}")
+                if not PAPER_TRADING and pos.server_sl_order_id:
+                    try:
+                        self.scanner.cancel_order(pos.symbol, pos.server_sl_order_id)
+                        new_id = self.scanner.create_stop_loss_order(
+                            pos.symbol, pos.quantity, be_price)
+                        if new_id:
+                            pos.server_sl_order_id = new_id
+                    except Exception as e:
+                        print(f"{self.get_slot_name()} ⚠️ BE SL update failed: {e}")
         
         # Take Profit
         if current_price >= pos.take_profit:
             await self.exit_position("TP_HIT", current_price)
             return "TP_HIT"
         
-        # Stop Loss
+        # Stop Loss (Software Fallback)
         if current_price <= pos.stop_loss:
             await self.exit_position("SL_HIT", current_price)
             return "SL_HIT"
@@ -322,12 +458,39 @@ class SniperSlot:
             is_winner = self.handler.is_winner(pnl_pct)
             winner_tag = "🏆 WINNER" if is_winner else ""
             print(f"{self.get_slot_name()} 📈 Trailing stop activated @ ${pos.trailing_stop:.6f} (Trail: {exit_rules.trailing_distance_pct}%) {winner_tag}")
+            
+            # V5: Update Server-Side SL immediately on activation
+            if not PAPER_TRADING:
+                try:
+                    if pos.server_sl_order_id:
+                        self.scanner.cancel_order(pos.symbol, pos.server_sl_order_id)
+                    
+                    new_id = self.scanner.create_stop_loss_order(pos.symbol, pos.quantity, pos.trailing_stop)
+                    if new_id:
+                        pos.server_sl_order_id = new_id
+                        print(f"{self.get_slot_name()} 🛡️ Server SL Updated (Trail Active): ${pos.trailing_stop:.6f}")
+                except Exception as e:
+                    print(f"{self.get_slot_name()} ⚠️ Failed to update Server SL: {e}")
         
         # Ratchet trailing stop update (only moves UP)
         if pos.trailing_activated and RATCHET_TRAILING_STOP:
             new_stop = pos.highest_price * (1 - exit_rules.trailing_distance_pct / 100)
             if new_stop > pos.trailing_stop:
+                old_stop = pos.trailing_stop
                 pos.trailing_stop = new_stop
+                
+                # V5: Update Server-Side SL on Ratchet
+                if not PAPER_TRADING:
+                    try:
+                        if pos.server_sl_order_id:
+                            self.scanner.cancel_order(pos.symbol, pos.server_sl_order_id)
+                        
+                        new_id = self.scanner.create_stop_loss_order(pos.symbol, pos.quantity, pos.trailing_stop)
+                        if new_id:
+                            pos.server_sl_order_id = new_id
+                            print(f"{self.get_slot_name()} ⤴️ Server SL Ratcheted: ${old_stop:.6f} -> ${pos.trailing_stop:.6f}")
+                    except Exception as e:
+                        print(f"{self.get_slot_name()} ⚠️ Failed to update Server SL: {e}")
         
         # Trailing Stop hit
         if pos.trailing_activated and pos.trailing_stop and current_price <= pos.trailing_stop:
@@ -458,19 +621,30 @@ class Dispatcher:
     
     def __init__(self):
         self.queue: asyncio.Queue = asyncio.Queue(maxsize=50)
-        self.shared_state: Dict = {
-            'running': False,
-            'balance': INITIAL_BALANCE,
-            'slots': []
-        }
         
         self.capital_manager = get_capital_manager()
         
+        # Get starting balance (real or paper)
+        if PAPER_TRADING:
+            start_balance = INITIAL_BALANCE
+        else:
+            scanner = get_scanner()
+            start_balance = scanner.get_balance('USDT')
+            if start_balance <= 0:
+                print(f"[DISPATCHER] ⚠️ Could not read balance from Bybit, using INITIAL_BALANCE")
+                start_balance = INITIAL_BALANCE
+            else:
+                print(f"[DISPATCHER] 💰 Bybit USDT Balance: ${start_balance:.2f}")
+        
+        self.shared_state: Dict = {
+            'running': False,
+            'balance': start_balance,
+            'slots': []
+        }
+        
         # V3: Create slots DYNAMICALLY based on balance
-        # With $12 and BASE_TRADE_SIZE=$5, this creates 2 slots
-        # As balance grows, more slots are added (up to MAX_CONCURRENT_SLOTS)
-        initial_slot_count = self.capital_manager.calculate_slot_count(INITIAL_BALANCE)
-        print(f"[DISPATCHER] Creating {initial_slot_count} slots for ${INITIAL_BALANCE:.2f} balance")
+        initial_slot_count = self.capital_manager.calculate_slot_count(start_balance)
+        print(f"[DISPATCHER] Creating {initial_slot_count} slots for ${start_balance:.2f} balance")
         
         self.slots: List[SniperSlot] = []
         for i in range(initial_slot_count):
