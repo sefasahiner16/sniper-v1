@@ -24,14 +24,7 @@ jobs:
             # 2. Pull the latest code from GitHub
             git pull origin main
             
-            # 3. Install any new requirements (uncomment if you have a requirements.txt)
-            # pip install -r requirements.txt
-            
-            # 4. Restart the bot
-            # Replace this with exactly how you restart your bot on the server.
-            # Example if using tmux: 
-            # tmux kill-session -t sniper || true 
-            # tmux new-session -d -s sniper 'python main.py'
-            
-            # Example if using systemd:
-            # sudo systemctl restart sniperbot
+            # 3. Restart the bot using systemctl
+            # We assume your service is called 'sniper' or 'sniperbot'. 
+            # Please change 'sniperbot' below to the exact name of your service!
+            sudo systemctl restart sniperbot
